@@ -92,10 +92,12 @@ sizes, run `python3 scripts/generate-icons.py` with Pillow installed.
 
 1. Quit other Claude instances before signing in to a new profile. Browser
    sign-in and connector callbacks can otherwise reach the wrong instance.
-2. Launch Claude Replicant and click **+** to add a profile, e.g. "Work".
+2. Launch Claude Replicant and press **⌘N** (File → New Profile, or the
+   toolbar **+**), then type a name such as "Work" and press Return.
 3. Click **Start**, sign into that account, then **Stop** it before setting
    up another profile. Check which account your browser is signed into.
-4. Once each profile is signed in, start them together to work side by side.
+4. Once each profile is signed in, start them together to work side by side —
+   the **Profiles → Start All** menu item launches every profile at once.
    **Stop** quits that instance and preserves its login for next time.
 
 Use **Default Claude** for the account already signed in through the normal
@@ -110,11 +112,20 @@ The rename from claude-many keeps `~/Library/Application Support/Claude-Many`
 in place. If you installed the old `claude-many.app`, quit it and remove that
 app copy after installing `Claude Replicant.app`; keep the profile data.
 
-Other controls: the **⋯** menu renames or deletes a profile. Deleting only
-removes it from the list — the data directory stays on disk so nothing is
-lost (remove it manually if you truly want to delete the account data).
-Settings (⌘,) lets you change the Claude.app path if it is not installed in
-`/Applications`.
+The profile list works like Finder: click to select (⇧/⌘ for multiples),
+double-click to open a profile, press **Return** to rename it inline, **⌘⌫**
+to delete, and drag to reorder profiles below the pinned Default entry.
+Right-click a row (or use the **Profiles** menu) for Open, Stop, Rename,
+Delete, Reveal in Finder, and Copy Data Folder Path. Add, rename, delete,
+and reorder are all undoable via **⌘Z**. The window title bar shows how many
+instances are running, and quitting the window quits the app; running Claude
+instances keep running and are adopted on the next launch.
+
+Deleting a profile only removes it from the list — the data directory stays
+on disk so nothing is lost (remove it manually if you truly want to delete
+the account data). Settings (**⌘,**) shows the Claude.app location with a
+**Choose…** picker if it is not installed in `/Applications`; the chosen
+path persists across launches.
 
 ## Tests
 

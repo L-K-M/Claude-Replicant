@@ -3,10 +3,13 @@ import SwiftUI
 struct ProfileRowView: View {
     @Bindable var manager: ProfileManager
     let profile: ClaudeProfile
-
-    @State private var showingRenameAlert = false
-    @State private var renameText = ""
-    @State private var showingDeleteConfirm = false
+    let isEditing: Bool
+    @Binding var draft: String
+    var nameFieldFocused: FocusState<Bool>.Binding
+    let commitEditing: () -> Void
+    let cancelEditing: () -> Void
+    let requestRename: () -> Void
+    let requestDelete: () -> Void
 
     private var isRunning: Bool { manager.isRunning(id: profile.id) }
 
@@ -18,21 +21,26 @@ struct ProfileRowView: View {
                 .accessibilityLabel(isRunning ? "Running" : "Stopped")
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(profile.label)
-                    .font(.headline)
-                Text(profile.isDefault ? "Uses normal Claude data and settings" : profile.dataDirectory.path)
+                if isEditing {
+                    TextField("Profile Name", text: $draft)
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .focused(nameFieldFocused)
+                        .onSubmit(commitEditing)
+                        .onKeyPress(.escape) {
+                            cancelEditing()
+                            return .handled
+                        }
+                        .frame(maxWidth: 280)
+                } else {
+                    Text(profile.label)
+                        .font(.headline)
+                }
+                Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-            }
-            .alert("Rename Profile", isPresented: $showingRenameAlert) {
-                TextField("Name", text: $renameText)
-                Button("Save") {
-                    do { try manager.renameProfile(id: profile.id, to: renameText) }
-                    catch { manager.report(error) }
-                }
-                Button("Cancel", role: .cancel) {}
             }
 
             Spacer()
@@ -50,41 +58,40 @@ struct ProfileRowView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!manager.bundleExists)
-                .help(profile.isDefault ? "Launch the normal Claude Desktop instance" : "Launch Claude Desktop with this profile's data directory")
+                .help(profile.isDefault
+                      ? "Launch the normal Claude Desktop instance"
+                      : "Launch Claude Desktop with this profile's data directory")
             }
 
-            if !profile.isDefault {
-                Menu {
-                    Button("Rename…") {
-                        renameText = profile.label
-                        showingRenameAlert = true
-                    }
-                    Divider()
-                    Button("Delete", role: .destructive) {
-                        showingDeleteConfirm = true
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .frame(width: 16)
+            Menu {
+                if !profile.isDefault {
+                    Button("Rename…", action: requestRename)
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .help("More actions")
+                Button("Reveal in Finder") {
+                    MacPlatform.revealInFinder(profile.dataDirectory)
+                }
+                Button("Copy Data Folder Path") {
+                    MacPlatform.copyPathToPasteboard(profile.dataDirectory)
+                }
+                if !profile.isDefault {
+                    Divider()
+                    Button("Delete…", role: .destructive, action: requestDelete)
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .frame(width: 16)
             }
-        }
-        .confirmationDialog(
-            "Delete “\(profile.label)”?",
-            isPresented: $showingDeleteConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Delete Profile", role: .destructive) {
-                do { try manager.removeProfile(id: profile.id) }
-                catch { manager.report(error) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The profile is removed from the list. Its data directory stays on disk so nothing is lost.")
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("More actions")
         }
         .padding(.vertical, 4)
+    }
+
+    private var subtitle: String {
+        if profile.isDefault {
+            return "Your normal Claude account and data"
+        }
+        return MacPlatform.homeRelativePath(of: profile.dataDirectory)
     }
 }

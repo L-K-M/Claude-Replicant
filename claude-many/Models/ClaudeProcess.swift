@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import AppKit
 
 /// Handle to a running Claude instance, abstracted behind a protocol so unit
 /// tests can verify state transitions without launching the real app.
@@ -29,6 +30,8 @@ protocol ClaudeLauncher: Sendable {
     func launch(executable: URL, location: ClaudeInstanceLocation) throws -> ClaudeProcessHandle
     /// Current-user standard and argv-selected isolated instances of `executable`.
     func runningHandles(executable: URL) -> [ClaudeProcessHandle]
+    /// Brings the process's windows to the front (double-click "Open").
+    func activate(handle: ClaudeProcessHandle)
 }
 
 /// Real launcher backed by Foundation's `Process`.
@@ -77,6 +80,11 @@ struct RealClaudeLauncher: ClaudeLauncher {
             ))
         }
         return result
+    }
+
+    func activate(handle: ClaudeProcessHandle) {
+        NSRunningApplication(processIdentifier: pid_t(handle.processIdentifier))?
+            .activate(options: [])
     }
 
     // MARK: Process introspection

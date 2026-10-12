@@ -1,37 +1,65 @@
 import SwiftUI
+import AppKit
 
 struct SettingsView: View {
     @Bindable var manager: ProfileManager
-    @State private var path = ""
 
     var body: some View {
         Form {
             Section("Claude Application") {
-                TextField("Path to Claude.app", text: $path)
-                    .onChange(of: path) { _, newValue in
-                        manager.setBundlePath(newValue)
+                LabeledContent("Claude.app") {
+                    HStack(spacing: 8) {
+                        if manager.bundleExists {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: manager.claudeBundleURL.path))
+                                .resizable()
+                                .frame(width: 20, height: 20)
+                        }
+                        Text(MacPlatform.homeRelativePath(of: manager.claudeBundleURL))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
                     }
+                }
                 HStack {
-                    Button("Reset to Default") {
-                        manager.setBundlePath(ProfileManager.defaultBundleURL.path)
-                        path = manager.claudeBundleURL.path
+                    Button("Choose…") {
+                        MacPlatform.chooseApplicationBundle { url in
+                            if let url { manager.setBundleURL(url) }
+                        }
                     }
+                    Button("Reset to Default") {
+                        manager.resetBundlePath()
+                    }
+                    .disabled(manager.claudeBundleURL == ProfileManager.defaultBundleURL)
                     Spacer()
                     Label(
-                        manager.bundleExists ? "Claude.app found" : "Claude.app not found",
+                        manager.bundleExists ? "Found" : "Not found",
                         systemImage: manager.bundleExists
                             ? "checkmark.circle.fill"
                             : "exclamationmark.triangle.fill"
                     )
                     .foregroundStyle(manager.bundleExists ? .green : .orange)
+                    .labelStyle(.titleAndIcon)
+                    .font(.callout)
                 }
             }
 
-            Section("Where data lives") {
+            Section("Data") {
                 LabeledContent("Profiles directory") {
-                    Text(ProfileManager.profilesRootDirectory.path)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
+                    HStack(spacing: 8) {
+                        Text(MacPlatform.homeRelativePath(of: ProfileManager.profilesRootDirectory))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                        Button("Reveal in Finder") {
+                            try? FileManager.default.createDirectory(
+                                at: ProfileManager.profilesRootDirectory,
+                                withIntermediateDirectories: true
+                            )
+                            MacPlatform.revealInFinder(ProfileManager.profilesRootDirectory)
+                        }
+                    }
                 }
             }
 
@@ -44,6 +72,5 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 480)
         .padding()
-        .onAppear { path = manager.claudeBundleURL.path }
     }
 }

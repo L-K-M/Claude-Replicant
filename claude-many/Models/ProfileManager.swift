@@ -12,8 +12,17 @@ final class ProfileManager {
     private(set) var profiles: [ClaudeProfile] = []
     var listedProfiles: [ClaudeProfile] { [.standard] + profiles }
     private(set) var runningProfileIDs: Set<UUID> = []
-    var claudeBundleURL: URL
+    private(set) var claudeBundleURL: URL
     private(set) var lastError: String?
+
+    var runningCount: Int { runningProfileIDs.count }
+
+    /// One-line summary for the window's status area.
+    var statusSummary: String {
+        runningCount == 0
+            ? "No instances running"
+            : "\(runningCount) of \(listedProfiles.count) running"
+    }
 
     // MARK: Dependencies
 
@@ -23,6 +32,7 @@ final class ProfileManager {
     /// `Profiles` folder; injectable so tests can use scratch roots.
     let dataRootDirectory: URL
     private let launcher: any ClaudeLauncher
+    private let defaults: UserDefaults
     private var handles: [UUID: ClaudeProcessHandle] = [:]
     /// Pending force-kill timers, one per stopped profile.
     private var forceKillTasks: [UUID: Task<Void, Never>] = [:]
@@ -46,23 +56,40 @@ final class ProfileManager {
 
     static let defaultBundleURL = URL(fileURLWithPath: "/Applications/Claude.app")
 
+    /// UserDefaults key for a relocated Claude.app. Only written when the user
+    /// picks a location other than the default.
+    static let bundlePathDefaultsKey = "claudeBundlePath"
+
     var bundleExists: Bool {
         FileManager.default.fileExists(atPath: claudeBundleURL.path)
     }
 
     // MARK: Init
 
+    // `defaults` stays an Optional: the compiler crashes emitting
+    // `UserDefaults.standard` as a default argument inside a @State
+    // property initializer on Xcode 16.4.
     init(
         store: ProfileStore? = nil,
         launcher: any ClaudeLauncher = RealClaudeLauncher(),
-        claudeBundleURL: URL = ProfileManager.defaultBundleURL,
+        claudeBundleURL: URL? = nil,
+        defaults: UserDefaults? = nil,
         dataRootDirectory: URL = ProfileManager.profilesRootDirectory
     ) {
         self.store = store
             ?? ProfileStore(fileURL: Self.appSupportDirectory.appendingPathComponent("profiles.json"))
         self.launcher = launcher
-        self.claudeBundleURL = claudeBundleURL
+        self.defaults = defaults ?? .standard
         self.dataRootDirectory = dataRootDirectory
+        self.claudeBundleURL = claudeBundleURL ?? Self.storedBundleURL(in: self.defaults)
+    }
+
+    private static func storedBundleURL(in defaults: UserDefaults) -> URL {
+        guard let path = defaults.string(forKey: bundlePathDefaultsKey),
+              !path.isEmpty else {
+            return defaultBundleURL
+        }
+        return URL(fileURLWithPath: path, isDirectory: true)
     }
 
     // MARK: Load / persist
@@ -140,6 +167,21 @@ final class ProfileManager {
         return profile
     }
 
+    /// Creates a profile with a placeholder name, like Finder's "untitled
+    /// folder": the UI selects the name for immediate editing.
+    @discardableResult
+    func addUntitledProfile() throws -> ClaudeProfile {
+        let base = "New Profile"
+        let existing = Set(profiles.map(\.label))
+        var label = base
+        var counter = 2
+        while existing.contains(label) {
+            label = "\(base) \(counter)"
+            counter += 1
+        }
+        return try addProfile(named: label)
+    }
+
     func renameProfile(id: UUID, to newLabel: String) throws {
         guard id != ClaudeProfile.standard.id else { throw ProfileManagerError.builtInProfile }
         guard let index = profiles.firstIndex(where: { $0.id == id }) else {
@@ -159,6 +201,29 @@ final class ProfileManager {
         stop(id: id)
         profiles.removeAll { $0.id == id }
         try persist()
+    }
+
+    /// Drag-to-reorder within the user-managed profiles (the built-in Default
+    /// entry is not part of `profiles` and always stays first).
+    func moveProfiles(fromOffsets source: IndexSet, toOffset destination: Int) throws {
+        profiles.move(fromOffsets: source, toOffset: destination)
+        try persist()
+    }
+
+    /// Replaces the profile list wholesale. Used by Undo to restore a snapshot
+    /// taken before a mutation. Persistence failure is reported, not thrown:
+    /// undo handlers must not fail.
+    func restoreProfiles(_ snapshot: [ClaudeProfile]) {
+        let snapshotIDs = Set(snapshot.map(\.id))
+        for id in profiles.map(\.id) where !snapshotIDs.contains(id) {
+            stop(id: id)
+        }
+        profiles = snapshot
+        do {
+            try persist()
+        } catch {
+            lastError = "Could not save profiles: \(error.localizedDescription)"
+        }
     }
 
     // MARK: Start / stop
@@ -228,6 +293,20 @@ final class ProfileManager {
         }
     }
 
+    /// "Open" a profile like a document: starts it when stopped, or brings the
+    /// existing instance's windows to the front when already running.
+    func open(id: UUID) {
+        if isRunning(id: id), let handle = handles[id] {
+            launcher.activate(handle: handle)
+            return
+        }
+        do {
+            try start(id: id)
+        } catch {
+            report(error)
+        }
+    }
+
     /// Asks the instance to quit cleanly (SIGTERM), then force-kills it if it
     /// has not exited within a few seconds. The UI reflects "stopped"
     /// immediately; internal bookkeeping is cleaned up when the process exits.
@@ -251,6 +330,19 @@ final class ProfileManager {
         }
     }
 
+    /// Starts every listed profile that is not already running. Failures on
+    /// one profile do not prevent the rest from starting; the last error is
+    /// surfaced to the user.
+    func startAll() {
+        for profile in listedProfiles where !isRunning(id: profile.id) {
+            do {
+                try start(id: profile.id)
+            } catch {
+                report(error)
+            }
+        }
+    }
+
     private func handleTermination(of id: UUID, handle: ClaudeProcessHandle) {
         // Only clean up if this is still the tracked handle for the profile:
         // a stale handle from an earlier stop could otherwise wipe out the
@@ -264,11 +356,26 @@ final class ProfileManager {
 
     // MARK: Settings
 
+    /// Updates the Claude.app location and persists it. An empty path (or the
+    /// default path) clears the override so the standard location is used.
     func setBundlePath(_ path: String) {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        claudeBundleURL = trimmed.isEmpty
-            ? Self.defaultBundleURL
-            : URL(fileURLWithPath: trimmed, isDirectory: true)
+        if trimmed.isEmpty || trimmed == Self.defaultBundleURL.path {
+            defaults.removeObject(forKey: Self.bundlePathDefaultsKey)
+            claudeBundleURL = Self.defaultBundleURL
+        } else {
+            defaults.set(trimmed, forKey: Self.bundlePathDefaultsKey)
+            claudeBundleURL = URL(fileURLWithPath: trimmed, isDirectory: true)
+        }
+    }
+
+    func setBundleURL(_ url: URL) {
+        setBundlePath(url.path)
+    }
+
+    func resetBundlePath() {
+        defaults.removeObject(forKey: Self.bundlePathDefaultsKey)
+        claudeBundleURL = Self.defaultBundleURL
     }
 
     func report(_ error: any Error) {

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 /// The focused window's profile actions, exposed to the menu bar. Menus read
 /// the precomputed titles and enabled flags; the closures act on the window's
@@ -63,6 +64,10 @@ struct ProfileCommands: Commands {
         focusedContext ?? center.context
     }
 
+    // Items carry no baked `.disabled`: enablement and selection-dependent
+    // titles are owned by ProfilesMenuBridge, which keeps the synthesized
+    // NSMenuItems in sync with the live context. Actions stay safe on their
+    // own — every closure is a no-op when it does not apply.
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Profile") { context.newProfile() }
@@ -70,32 +75,24 @@ struct ProfileCommands: Commands {
         }
 
         CommandMenu("Profiles") {
-            Button(context.openTitle) { context.openSelected() }
+            Button("Open") { context.openSelected() }
                 .keyboardShortcut(.return, modifiers: .command)
-                .disabled(!context.canOpen)
-            Button(context.stopTitle) { context.stopSelected() }
+            Button("Stop") { context.stopSelected() }
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
-                .disabled(!context.canStop)
             Button("Rename…") { context.renameSelected() }
                 .keyboardShortcut(.return, modifiers: [])
-                .disabled(!context.canRename)
-            Button(context.deleteTitle) { context.deleteSelected() }
+            Button("Delete Profile…") { context.deleteSelected() }
                 .keyboardShortcut(.delete, modifiers: .command)
-                .disabled(!context.canDelete)
 
             Divider()
 
             Button("Reveal in Finder") { context.revealSelected() }
-                .disabled(!context.canReveal)
             Button("Copy Data Folder Path") { context.copyPathSelected() }
-                .disabled(!context.canCopyPath)
 
             Divider()
 
             Button("Start All") { context.startAll() }
-                .disabled(!context.canStartAll)
             Button("Stop All") { context.stopAll() }
-                .disabled(!context.canStopAll)
 
             Divider()
 
@@ -107,5 +104,65 @@ struct ProfileCommands: Commands {
                 NSWorkspace.shared.open(AppBranding.helpURL)
             }
         }
+    }
+}
+
+/// Mirrors the live command context onto the synthesized Profiles menu.
+/// SwiftUI bakes dynamic titles and `.disabled` at command-build time and
+/// does not reliably re-evaluate them; the bridge writes the current state
+/// on every context change and at every menu validation, so menu items and
+/// their key equivalents always match the window's real selection.
+@MainActor
+final class ProfilesMenuBridge: NSObject, NSMenuDelegate {
+    private weak var menu: NSMenu?
+    private var cancellable: AnyCancellable?
+    private var remainingAttempts = 20
+
+    func install() {
+        guard let item = NSApp.mainMenu?.items.first(where: { $0.title == "Profiles" }),
+              let menu = item.submenu else {
+            // The synthesized menu bar appears during scene setup; retry briefly.
+            if remainingAttempts > 0 {
+                remainingAttempts -= 1
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                    self?.install()
+                }
+            }
+            return
+        }
+        self.menu = menu
+        menu.delegate = self
+        sync()
+        cancellable = ProfileCommandCenter.shared.$context
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.sync() }
+    }
+
+    // Indices match the CommandMenu layout above: Open, Stop, Rename,
+    // Delete, sep, Reveal, Copy Path, sep, Start All, Stop All, sep, Folder.
+    private func sync() {
+        guard let menu, menu.items.count == 12 else { return }
+        let context = ProfileCommandCenter.shared.context
+        apply(menu.items[0], title: context.openTitle, enabled: context.canOpen)
+        apply(menu.items[1], title: context.stopTitle, enabled: context.canStop)
+        apply(menu.items[2], enabled: context.canRename)
+        apply(menu.items[3], title: context.deleteTitle, enabled: context.canDelete)
+        apply(menu.items[5], enabled: context.canReveal)
+        apply(menu.items[6], enabled: context.canCopyPath)
+        apply(menu.items[8], enabled: context.canStartAll)
+        apply(menu.items[9], enabled: context.canStopAll)
+    }
+
+    private func apply(_ item: NSMenuItem, title: String? = nil, enabled: Bool) {
+        if let title, item.title != title { item.title = title }
+        item.isEnabled = enabled
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        sync()
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        sync()
     }
 }

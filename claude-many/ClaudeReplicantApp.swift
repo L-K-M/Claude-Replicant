@@ -33,7 +33,14 @@ struct ClaudeReplicantApp: App {
 /// follows the single-window-utility convention and quits when the last
 /// window closes. Running Claude instances keep running and are adopted on
 /// the next launch.
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let menuBridge = ProfilesMenuBridge()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        menuBridge.install()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }

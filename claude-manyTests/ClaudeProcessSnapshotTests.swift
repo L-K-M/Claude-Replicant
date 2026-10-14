@@ -15,6 +15,17 @@ final class ClaudeProcessSnapshotTests: XCTestCase {
         XCTAssertEqual(legacy.environmentValues(named: "CLAUDE_USER_DATA_DIR"), ["/old"])
     }
 
+    func testUndecodableLocationHintsStillExcludeTheInstance() throws {
+        let invalidUTF8: [UInt8] = [0xff, 0]
+        let claude = header(argumentCount: 1) + Array("/Claude\0\0/Claude\0CLAUDE_USER_DATA_DIR=".utf8) + invalidUTF8
+        let chatGPT = header(argumentCount: 1)
+            + Array("/ChatGPT\0\0/ChatGPT\0CODEX_ELECTRON_USER_DATA_PATH=".utf8) + invalidUTF8
+        XCTAssertNil(ClaudeLaunchConfiguration.location(of: try XCTUnwrap(ClaudeProcessSnapshot(buffer: claude)),
+                                                        app: .claude))
+        XCTAssertNil(ClaudeLaunchConfiguration.location(of: try XCTUnwrap(ClaudeProcessSnapshot(buffer: chatGPT)),
+                                                        app: .chatGPT))
+    }
+
     func testKernelPaddingSpacesAndEmptyArgumentsArePreserved() throws {
         let executable = "/Applications/Claude.app/Contents/MacOS/Claude"
         let arguments = [executable, "", "--user-data-dir=/Profiles/Work Account/Ötzi"]

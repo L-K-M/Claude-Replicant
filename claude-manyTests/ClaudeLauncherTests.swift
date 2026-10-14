@@ -121,6 +121,9 @@ final class ClaudeLauncherTests: XCTestCase {
         let manager = ProfileManager(
             store: ProfileStore(fileURL: root.appendingPathComponent("profiles.json")),
             launcher: RealClaudeLauncher(),
+            // Default Claude is always scanned; a scratch path keeps stopAll
+            // away from a Claude Desktop the developer is running.
+            claudeBundleURL: root.appendingPathComponent("Claude.app"),
             chatGPTBundleURL: bundle,
             dataRootDirectory: root.appendingPathComponent("Profiles With Spaces")
         )
@@ -153,17 +156,17 @@ final class ClaudeLauncherTests: XCTestCase {
         let executable = try makeWaitingExecutable(named: "ChatGPT", root: root)
         let directory = root.appendingPathComponent("Research Account", isDirectory: true)
 
-        func process(arguments: [String], userData: String?) -> Process {
+        func makeProcess(arguments: [String], userData: String?) -> Process {
             let process = Process()
             process.executableURL = executable
             process.arguments = arguments
             process.environment = userData.map { ["CODEX_ELECTRON_USER_DATA_PATH": $0] } ?? [:]
             return process
         }
-        let isolated = process(arguments: ["--user-data-dir=\(directory.path)"], userData: directory.path)
-        let argvOnly = process(arguments: ["--user-data-dir=\(root.appendingPathComponent("Other").path)"], userData: nil)
-        let environmentOnly = process(arguments: [], userData: directory.path)
-        let standard = process(arguments: [], userData: nil)
+        let isolated = makeProcess(arguments: ["--user-data-dir=\(directory.path)"], userData: directory.path)
+        let argvOnly = makeProcess(arguments: ["--user-data-dir=\(root.appendingPathComponent("Other").path)"], userData: nil)
+        let environmentOnly = makeProcess(arguments: [], userData: directory.path)
+        let standard = makeProcess(arguments: [], userData: nil)
         let all = [isolated, argvOnly, environmentOnly, standard]
         defer {
             for process in all where process.isRunning {

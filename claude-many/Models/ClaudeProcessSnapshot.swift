@@ -37,7 +37,8 @@ struct ClaudeProcessSnapshot {
 
         self.executablePath = executablePath
         self.arguments = arguments
-        environment = buffer[index...].split(separator: 0).compactMap { String(bytes: $0, encoding: .utf8) }
+        // Decode lossily: an undecodable location hint must still exclude the instance.
+        environment = buffer[index...].split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
     }
 
     /// Every value of `name`, in order. Callers decide how duplicates resolve.

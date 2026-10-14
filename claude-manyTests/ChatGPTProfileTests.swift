@@ -138,6 +138,19 @@ final class ChatGPTProfileTests: XCTestCase {
         XCTAssertFalse(misplaced.terminationRequested)
     }
 
+    func testRunningClassicIsNeverAdoptedAsDefaultChatGPT() throws {
+        try makeChatGPTBundle(identifier: Self.classicBundleIdentifier)
+        _ = try manager.addProfile(named: "Research", app: .chatGPT)
+        let classic = FakeClaudeProcess(app: .chatGPT)
+        launcher.runningHandlesToReturn = [classic]
+
+        manager.load()
+        XCTAssertFalse(manager.isRunning(id: defaultChatGPT.id))
+
+        manager.stopAll()
+        XCTAssertFalse(classic.terminationRequested, "an app that cannot be started must not be stopped either")
+    }
+
     func testDeletingTheLastChatGPTProfileReleasesDefaultChatGPTWithoutQuittingIt() throws {
         let profile = try manager.addProfile(named: "Research", app: .chatGPT)
         let normalChatGPT = FakeClaudeProcess(app: .chatGPT)

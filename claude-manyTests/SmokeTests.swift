@@ -20,6 +20,8 @@ final class SmokeTests: XCTestCase {
     /// removed after the whole class finishes, so an ordinary later test run
     /// never launches real applications.
     nonisolated private static let gateFlag = "/tmp/claude-many-smoke-run"
+    private static let claudeBundleIdentifier = "com.anthropic.claudefordesktop"
+    private static let chatGPTBundleIdentifier = "com.openai.codex"
 
     nonisolated override class func tearDown() {
         try? FileManager.default.removeItem(atPath: gateFlag)
@@ -41,10 +43,10 @@ final class SmokeTests: XCTestCase {
         let manager = ProfileManager(
             store: ProfileStore(fileURL: root.appendingPathComponent("profiles.json")),
             launcher: RealClaudeLauncher(),
-            claudeBundleURL: ProfileManager.defaultBundleURL,
+            claudeBundleURL: ManagedApp.claude.defaultBundleURL,
             dataRootDirectory: root.appendingPathComponent("Profiles")
         )
-        XCTAssertTrue(manager.bundleExists, "Claude.app must be installed for the smoke test")
+        XCTAssertEqual(manager.bundleStatus(for: .claude), .available, "Claude.app must be installed for the smoke test")
 
         // Two profiles with distinct scratch data dirs.
         let p1 = try manager.addProfile(named: "Smoke One")
@@ -54,8 +56,8 @@ final class SmokeTests: XCTestCase {
 
         // Baseline: other Claude instances (e.g. the user's own) may already
         // be running; we only count the ones this test adds.
-        let baselineProcesses = claudeProcessCount()
-        let baselineWindows = claudeWindowCount()
+        let baselineProcesses = processCount(bundleIdentifier: Self.claudeBundleIdentifier)
+        let baselineWindows = windowCount(bundleIdentifier: Self.claudeBundleIdentifier)
 
         // Start both.
         try manager.start(id: p1.id)
@@ -71,16 +73,16 @@ final class SmokeTests: XCTestCase {
 
         // Exactly the two new processes appeared, each with Claude's bundle id.
         XCTAssertTrue(waitFor(timeout: 60) {
-            claudeProcessCount() >= baselineProcesses + 2
+            processCount(bundleIdentifier: Self.claudeBundleIdentifier) >= baselineProcesses + 2
         }, "expected 2 additional running Claude Desktop processes")
-        XCTAssertEqual(claudeProcessCount() - baselineProcesses, 2,
+        XCTAssertEqual(processCount(bundleIdentifier: Self.claudeBundleIdentifier) - baselineProcesses, 2,
                        "exactly two new Claude instances should be running")
 
         // ... and two separate windows, one per instance.
         XCTAssertTrue(waitFor(timeout: 60) {
-            claudeWindowCount() >= baselineWindows + 2
+            windowCount(bundleIdentifier: Self.claudeBundleIdentifier) >= baselineWindows + 2
         }, "expected 2 additional Claude windows")
-        XCTAssertEqual(claudeWindowCount() - baselineWindows, 2,
+        XCTAssertEqual(windowCount(bundleIdentifier: Self.claudeBundleIdentifier) - baselineWindows, 2,
                        "exactly two new Claude windows should be on screen")
 
         // Stop both; expect clean termination (delta back to baseline).
@@ -90,10 +92,70 @@ final class SmokeTests: XCTestCase {
             !manager.isRunning(id: p1.id) && !manager.isRunning(id: p2.id)
         }, "both instances should stop cleanly")
         XCTAssertTrue(waitFor(timeout: 30) {
-            claudeProcessCount() <= baselineProcesses
+            processCount(bundleIdentifier: Self.claudeBundleIdentifier) <= baselineProcesses
         }, "the two smoke instances should have exited")
 
         // defer removes the scratch dir; nothing leaks into ~/Library.
+    }
+
+    /// The ChatGPT counterpart: two isolated instances, each with its own
+    /// userData and CODEX_HOME. Skipped unless the current ChatGPT app is in
+    /// /Applications; ChatGPT Classic cannot run profiles.
+    func testSmokeTwoIsolatedChatGPTInstances() throws {
+        let envGate = ProcessInfo.processInfo.environment["CLAUDE_MANY_SMOKE"] == "1"
+        try XCTSkipUnless(
+            envGate || FileManager.default.fileExists(atPath: Self.gateFlag),
+            "Opt in with CLAUDE_MANY_SMOKE=1 or `touch /tmp/claude-many-smoke-run` (launches real ChatGPT instances)."
+        )
+
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory
+            .appendingPathComponent("claude-many-smoke-chatgpt-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let manager = ProfileManager(
+            store: ProfileStore(fileURL: root.appendingPathComponent("profiles.json")),
+            launcher: RealClaudeLauncher(),
+            chatGPTBundleURL: ManagedApp.chatGPT.defaultBundleURL,
+            dataRootDirectory: root.appendingPathComponent("Profiles")
+        )
+        try XCTSkipUnless(manager.bundleStatus(for: .chatGPT) == .available,
+                          "The current ChatGPT app must be installed in /Applications.")
+
+        let p1 = try manager.addProfile(named: "Smoke One", app: .chatGPT)
+        let p2 = try manager.addProfile(named: "Smoke Two", app: .chatGPT)
+        let baselineProcesses = processCount(bundleIdentifier: Self.chatGPTBundleIdentifier)
+        let baselineWindows = windowCount(bundleIdentifier: Self.chatGPTBundleIdentifier)
+
+        try manager.start(id: p1.id)
+        try manager.start(id: p2.id)
+        XCTAssertTrue(waitFor(timeout: 20) {
+            manager.isRunning(id: p1.id) && manager.isRunning(id: p2.id)
+        }, "both instances should be running")
+
+        // The launcher only creates .codex; the rest proves ChatGPT honored
+        // the profile's storage instead of its normal folder.
+        XCTAssertTrue(waitFor(timeout: 180) {
+            self.isPopulated(p1.dataDirectory) && self.isPopulated(p2.dataDirectory)
+        }, "ChatGPT did not populate both profile data directories")
+
+        XCTAssertTrue(waitFor(timeout: 60) {
+            processCount(bundleIdentifier: Self.chatGPTBundleIdentifier) >= baselineProcesses + 2
+        }, "expected 2 additional running ChatGPT processes")
+        XCTAssertEqual(processCount(bundleIdentifier: Self.chatGPTBundleIdentifier) - baselineProcesses, 2,
+                       "exactly two new ChatGPT instances should be running")
+        XCTAssertTrue(waitFor(timeout: 60) {
+            windowCount(bundleIdentifier: Self.chatGPTBundleIdentifier) >= baselineWindows + 2
+        }, "expected a window from each ChatGPT instance")
+
+        manager.stop(id: p1.id)
+        manager.stop(id: p2.id)
+        XCTAssertTrue(waitFor(timeout: 30) {
+            !manager.isRunning(id: p1.id) && !manager.isRunning(id: p2.id)
+        }, "both instances should stop cleanly")
+        XCTAssertTrue(waitFor(timeout: 30) {
+            processCount(bundleIdentifier: Self.chatGPTBundleIdentifier) <= baselineProcesses
+        }, "the two smoke instances should have exited")
     }
 
     /// Verifies the relaunch-reconciliation path end to end: quit the app
@@ -118,19 +180,19 @@ final class SmokeTests: XCTestCase {
             ProfileManager(
                 store: store,
                 launcher: RealClaudeLauncher(),
-                claudeBundleURL: ProfileManager.defaultBundleURL,
+                claudeBundleURL: ManagedApp.claude.defaultBundleURL,
                 dataRootDirectory: dataRoot
             )
         }
         let manager = makeManager()
-        XCTAssertTrue(manager.bundleExists, "Claude.app must be installed for the smoke test")
+        XCTAssertEqual(manager.bundleStatus(for: .claude), .available, "Claude.app must be installed for the smoke test")
 
         let profile = try manager.addProfile(named: "Reconcile One")
         try manager.start(id: profile.id)
         XCTAssertTrue(waitFor(timeout: 20) { manager.isRunning(id: profile.id) })
         XCTAssertTrue(waitFor(timeout: 180) { self.isPopulated(profile.dataDirectory) })
 
-        let baselineProcesses = claudeProcessCount()
+        let baselineProcesses = processCount(bundleIdentifier: Self.claudeBundleIdentifier)
 
         // Simulate an app relaunch: a brand-new manager over the same store
         // and data root, as if the user quit claude-many without stopping.
@@ -142,35 +204,35 @@ final class SmokeTests: XCTestCase {
         // Start must not spawn a second instance into the live data dir.
         try relaunched.start(id: profile.id)
         XCTAssertTrue(waitFor(timeout: 60) {
-            claudeProcessCount() <= baselineProcesses
+            processCount(bundleIdentifier: Self.claudeBundleIdentifier) <= baselineProcesses
         }, "no additional Claude process may be spawned while the leftover owns the data dir")
 
         // Stopping via the relaunched manager terminates the leftover.
         relaunched.stop(id: profile.id)
         XCTAssertTrue(waitFor(timeout: 30) {
-            !relaunched.isRunning(id: profile.id) && claudeProcessCount() <= baselineProcesses - 1
+            !relaunched.isRunning(id: profile.id) && processCount(bundleIdentifier: Self.claudeBundleIdentifier) <= baselineProcesses - 1
         }, "stopping the reconciled instance must terminate the leftover process")
     }
 
     // MARK: Helpers
 
-    private func claudeProcessCount() -> Int {
+    private func processCount(bundleIdentifier: String) -> Int {
         NSWorkspace.shared.runningApplications
-            .filter { $0.bundleIdentifier == "com.anthropic.claudefordesktop" }
+            .filter { $0.bundleIdentifier == bundleIdentifier }
             .count
     }
 
-    private func claudeWindowCount() -> Int {
-        let claudePids = Set(
+    private func windowCount(bundleIdentifier: String) -> Int {
+        let pids = Set(
             NSWorkspace.shared.runningApplications
-                .filter { $0.bundleIdentifier == "com.anthropic.claudefordesktop" }
+                .filter { $0.bundleIdentifier == bundleIdentifier }
                 .map(\.processIdentifier)
         )
         let windows = (CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)
             as? [[String: Any]]) ?? []
         return windows.filter { win in
             guard let pid = win[kCGWindowOwnerPID as String] as? Int32 else { return false }
-            return claudePids.contains(pid)
+            return pids.contains(pid)
         }.count
     }
 

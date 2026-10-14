@@ -21,7 +21,7 @@ struct ProfileCommandContext {
     var deleteTitle: String = "Delete Profile…"
 
     // Actions (empty selection keeps them harmless)
-    var newProfile: () -> Void = {}
+    var newProfile: (ManagedApp) -> Void = { _ in }
     var openSelected: () -> Void = {}
     var stopSelected: () -> Void = {}
     var renameSelected: () -> Void = {}
@@ -70,8 +70,10 @@ struct ProfileCommands: Commands {
     // own — every closure is a no-op when it does not apply.
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("New Profile") { context.newProfile() }
+            Button(ManagedApp.claude.newProfileTitle) { context.newProfile(.claude) }
                 .keyboardShortcut("n")
+            Button(ManagedApp.chatGPT.newProfileTitle) { context.newProfile(.chatGPT) }
+                .keyboardShortcut("n", modifiers: [.command, .option])
         }
 
         CommandMenu("Profiles") {

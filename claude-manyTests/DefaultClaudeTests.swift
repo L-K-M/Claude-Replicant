@@ -17,7 +17,7 @@ final class DefaultClaudeTests: XCTestCase {
             claudeBundleURL: root.appendingPathComponent("Claude.app"),
             dataRootDirectory: root.appendingPathComponent("Profiles")
         )
-        try FileManager.default.createDirectory(at: manager.claudeBundleURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: manager.bundleURL(for: .claude), withIntermediateDirectories: true)
     }
 
     override func tearDown() async throws {

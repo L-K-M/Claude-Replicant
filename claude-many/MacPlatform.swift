@@ -8,12 +8,13 @@ enum MacPlatform {
     /// window when one exists. Returns nil when the user cancels.
     @MainActor
     static func chooseApplicationBundle(
+        named bundleName: String,
         startingAt directory: URL = URL(fileURLWithPath: "/Applications", isDirectory: true),
         completion: @escaping @MainActor @Sendable (URL?) -> Void
     ) {
         let panel = NSOpenPanel()
         panel.prompt = "Choose"
-        panel.message = "Choose Claude.app"
+        panel.message = "Choose \(bundleName)"
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
@@ -52,6 +53,14 @@ enum MacPlatform {
             candidate = parent
         }
         return candidate
+    }
+
+    /// The app's Finder icon, or the generic application icon while it is missing.
+    static func applicationIcon(at url: URL) -> NSImage {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return NSWorkspace.shared.icon(for: .applicationBundle)
+        }
+        return NSWorkspace.shared.icon(forFile: url.path)
     }
 
     static func copyPathToPasteboard(_ url: URL) {

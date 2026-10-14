@@ -7,10 +7,23 @@ final class ClaudeProcessSnapshotTests: XCTestCase {
         let legacy = try XCTUnwrap(ClaudeProcessSnapshot(buffer: prefix + Array("CLAUDE_USER_DATA_DIR=/old\0".utf8)))
         let empty = try XCTUnwrap(ClaudeProcessSnapshot(buffer: prefix + Array("CLAUDE_USER_DATA_DIR=\0".utf8)))
         let unrelated = try XCTUnwrap(ClaudeProcessSnapshot(buffer: prefix + Array("OTHER=CLAUDE_USER_DATA_DIR=/old\0".utf8)))
-        XCTAssertTrue(legacy.hasLegacyDataDirectoryOverride)
-        XCTAssertFalse(empty.hasLegacyDataDirectoryOverride)
-        XCTAssertFalse(unrelated.hasLegacyDataDirectoryOverride)
+        XCTAssertNil(ClaudeLaunchConfiguration.location(of: legacy, app: .claude))
+        XCTAssertEqual(ClaudeLaunchConfiguration.location(of: empty, app: .claude), .standard)
+        XCTAssertEqual(ClaudeLaunchConfiguration.location(of: unrelated, app: .claude), .standard)
         XCTAssertEqual(legacy.arguments, ["/Claude"])
+        XCTAssertEqual(unrelated.environmentValues(named: "CLAUDE_USER_DATA_DIR"), [])
+        XCTAssertEqual(legacy.environmentValues(named: "CLAUDE_USER_DATA_DIR"), ["/old"])
+    }
+
+    func testUndecodableLocationHintsStillExcludeTheInstance() throws {
+        let invalidUTF8: [UInt8] = [0xff, 0]
+        let claude = header(argumentCount: 1) + Array("/Claude\0\0/Claude\0CLAUDE_USER_DATA_DIR=".utf8) + invalidUTF8
+        let chatGPT = header(argumentCount: 1)
+            + Array("/ChatGPT\0\0/ChatGPT\0CODEX_ELECTRON_USER_DATA_PATH=".utf8) + invalidUTF8
+        XCTAssertNil(ClaudeLaunchConfiguration.location(of: try XCTUnwrap(ClaudeProcessSnapshot(buffer: claude)),
+                                                        app: .claude))
+        XCTAssertNil(ClaudeLaunchConfiguration.location(of: try XCTUnwrap(ClaudeProcessSnapshot(buffer: chatGPT)),
+                                                        app: .chatGPT))
     }
 
     func testKernelPaddingSpacesAndEmptyArgumentsArePreserved() throws {

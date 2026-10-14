@@ -36,14 +36,24 @@ pins it). Deployment target is macOS 14+. The project is a plain
   owned by other users; standard and isolated instances are tracked separately.
   Evidence, callback/pairing limits, and upgrade behavior are in README.md
   ("How it works"). Keep them accurate when the mechanism changes.
+- ChatGPT mechanism: launch `/Applications/ChatGPT.app/Contents/MacOS/ChatGPT`
+  (bundle `com.openai.codex` only) with `CODEX_ELECTRON_USER_DATA_PATH` and
+  `--user-data-dir` both set to the profile, and `CODEX_HOME` to its
+  `.codex/`. Packaged ChatGPT overrides the switch with the variable; discovery
+  adopts an instance only when both agree. ChatGPT Classic (`com.openai.chat`)
+  cannot isolate logins and is refused. Default ChatGPT is listed only while
+  ChatGPT profiles exist.
+- `ManagedApp` holds per-app facts. Types keep their `Claude` prefixes from
+  before ChatGPT support; they serve both apps.
 - `claude-many/Models/` owns the testable core: `ProfileStore`
   (persistence), `ProfileManager` (start/stop, injected launcher),
   `ClaudeProcess`, `ClaudeProfile`. `claude-many/Views/` is SwiftUI only.
 - The profile list lives in `~/Library/Application
   Support/Claude-Many/profiles.json`, per-profile data dirs under
-  `.../Profiles/<slug>/`. Never create, copy, or delete normal Claude data in
-  the shared `~/Library/Application Support/Claude` folder. Only Claude itself
-  manages that folder when the user launches the Default Claude entry.
+  `.../Profiles/<slug>/`. Never create, copy, or delete normal app data in
+  `~/Library/Application Support/Claude`, `~/Library/Application
+  Support/Codex`, or `~/.codex`. Only each app manages those when the user
+  launches its Default entry.
 
 ## Releases
 

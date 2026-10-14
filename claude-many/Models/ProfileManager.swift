@@ -2,18 +2,28 @@ import Foundation
 import Observation
 
 /// Core app logic: owns the profile list, persistence, and the lifecycle of
-/// Claude processes. Kept free of SwiftUI so the whole thing is unit-testable
-/// without launching Claude (the launcher is injected).
+/// Claude and ChatGPT processes. Kept free of SwiftUI so the whole thing is
+/// unit-testable without launching either app (the launcher is injected).
 @Observable
 @MainActor
 final class ProfileManager {
     // MARK: Published state
 
     private(set) var profiles: [ClaudeProfile] = []
-    var listedProfiles: [ClaudeProfile] { [.standard] + profiles }
     private(set) var runningProfileIDs: Set<UUID> = []
-    private(set) var claudeBundleURL: URL
     private(set) var lastError: String?
+    private var bundleURLs: [ManagedApp: URL]
+
+    /// Claude is always listed; ChatGPT once it has a profile.
+    var listedApps: [ManagedApp] {
+        ManagedApp.allCases.filter { app in
+            app.listsDefaultWithoutProfiles || profiles.contains { $0.app == app }
+        }
+    }
+
+    /// Pinned "Default <app>" entries, above the reorderable profiles.
+    var builtInProfiles: [ClaudeProfile] { listedApps.map(ClaudeProfile.builtIn(for:)) }
+    var listedProfiles: [ClaudeProfile] { builtInProfiles + profiles }
 
     var runningCount: Int { runningProfileIDs.count }
 
@@ -54,14 +64,12 @@ final class ProfileManager {
     static let profilesRootDirectory: URL =
         appSupportDirectory.appendingPathComponent("Profiles", isDirectory: true)
 
-    static let defaultBundleURL = URL(fileURLWithPath: "/Applications/Claude.app")
+    func bundleURL(for app: ManagedApp) -> URL {
+        bundleURLs[app] ?? app.defaultBundleURL
+    }
 
-    /// UserDefaults key for a relocated Claude.app. Only written when the user
-    /// picks a location other than the default.
-    static let bundlePathDefaultsKey = "claudeBundlePath"
-
-    var bundleExists: Bool {
-        FileManager.default.fileExists(atPath: claudeBundleURL.path)
+    func bundleStatus(for app: ManagedApp) -> AppBundleStatus {
+        app.bundleStatus(at: bundleURL(for: app))
     }
 
     // MARK: Init
@@ -73,6 +81,7 @@ final class ProfileManager {
         store: ProfileStore? = nil,
         launcher: any ClaudeLauncher = RealClaudeLauncher(),
         claudeBundleURL: URL? = nil,
+        chatGPTBundleURL: URL? = nil,
         defaults: UserDefaults? = nil,
         dataRootDirectory: URL = ProfileManager.profilesRootDirectory
     ) {
@@ -81,13 +90,22 @@ final class ProfileManager {
         self.launcher = launcher
         self.defaults = defaults ?? .standard
         self.dataRootDirectory = dataRootDirectory
-        self.claudeBundleURL = claudeBundleURL ?? Self.storedBundleURL(in: self.defaults)
+
+        var bundleURLs: [ManagedApp: URL] = [:]
+        for app in ManagedApp.allCases {
+            bundleURLs[app] = Self.storedBundleURL(for: app, in: self.defaults)
+        }
+        // Tests inject scratch bundles; the app uses stored or default locations.
+        if let claudeBundleURL { bundleURLs[.claude] = claudeBundleURL }
+        if let chatGPTBundleURL { bundleURLs[.chatGPT] = chatGPTBundleURL }
+        self.bundleURLs = bundleURLs
     }
 
-    private static func storedBundleURL(in defaults: UserDefaults) -> URL {
-        guard let path = defaults.string(forKey: bundlePathDefaultsKey),
+    /// Only written when the user picks a location other than the default.
+    private static func storedBundleURL(for app: ManagedApp, in defaults: UserDefaults) -> URL {
+        guard let path = defaults.string(forKey: app.bundlePathDefaultsKey),
               !path.isEmpty else {
-            return defaultBundleURL
+            return app.defaultBundleURL
         }
         return URL(fileURLWithPath: path, isDirectory: true)
     }
@@ -109,23 +127,41 @@ final class ProfileManager {
         for (id, handle) in handles where !handle.isRunning {
             handleTermination(of: id, handle: handle)
         }
+        releaseUnlistedBuiltIns()
 
-        let executable = claudeBundleURL.appendingPathComponent("Contents/MacOS/Claude")
-        for handle in launcher.runningHandles(executable: executable) {
-            guard handle.isRunning else { continue }
-            let id: UUID
-            switch handle.location {
-            case .standard:
-                id = ClaudeProfile.standard.id
-            case .isolated(let dataDirectory):
-                let directory = dataDirectory.standardizedFileURL.resolvingSymlinksInPath().path
-                guard let profile = profiles.first(where: {
-                    $0.dataDirectory.standardizedFileURL.resolvingSymlinksInPath().path == directory
-                }) else { continue }
-                id = profile.id
+        // Classic at the configured path cannot be started, so never manage
+        // its normal instance either.
+        for app in listedApps where bundleStatus(for: app) != .unsupported {
+            let executable = bundleURL(for: app).appendingPathComponent(app.executablePath)
+            for handle in launcher.runningHandles(app: app, executable: executable) {
+                guard handle.isRunning,
+                      let id = profileID(owning: handle.location, app: app),
+                      handles[id] == nil else { continue }
+                attach(handle: handle, to: id)
             }
-            guard handles[id] == nil else { continue }
-            attach(handle: handle, to: id)
+        }
+    }
+
+    /// The listed entry whose storage a discovered instance uses, if any.
+    private func profileID(owning location: ClaudeInstanceLocation, app: ManagedApp) -> UUID? {
+        guard let dataDirectory = location.dataDirectory else { return ClaudeProfile.builtIn(for: app).id }
+
+        let directory = dataDirectory.standardizedFileURL.resolvingSymlinksInPath().path
+        return profiles.first {
+            $0.app == app && $0.dataDirectory.standardizedFileURL.resolvingSymlinksInPath().path == directory
+        }?.id
+    }
+
+    /// Deleting the last ChatGPT profile unlists Default ChatGPT. Stop
+    /// tracking that normal instance without quitting it.
+    private func releaseUnlistedBuiltIns() {
+        let listed = Set(listedProfiles.map(\.id))
+        for (id, handle) in handles where ClaudeProfile.isBuiltIn(id: id) && !listed.contains(id) {
+            // A pending Stop keeps its handle until the process exits.
+            guard forceKillTasks[id] == nil else { continue }
+            handle.terminationHandler = nil
+            handles[id] = nil
+            runningProfileIDs.remove(id)
         }
     }
 
@@ -156,12 +192,12 @@ final class ProfileManager {
     // MARK: Profile CRUD
 
     @discardableResult
-    func addProfile(named label: String) throws -> ClaudeProfile {
+    func addProfile(named label: String, app: ManagedApp = .claude) throws -> ClaudeProfile {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ProfileManagerError.invalidLabel }
 
         let dataDirectory = try makeUniqueDataDirectory(for: trimmed)
-        let profile = ClaudeProfile(label: trimmed, dataDirectory: dataDirectory)
+        let profile = ClaudeProfile(label: trimmed, app: app, dataDirectory: dataDirectory)
         profiles.append(profile)
         try persist()
         return profile
@@ -170,8 +206,8 @@ final class ProfileManager {
     /// Creates a profile with a placeholder name, like Finder's "untitled
     /// folder": the UI selects the name for immediate editing.
     @discardableResult
-    func addUntitledProfile() throws -> ClaudeProfile {
-        let base = "New Profile"
+    func addUntitledProfile(for app: ManagedApp) throws -> ClaudeProfile {
+        let base = app.newProfileTitle
         let existing = Set(profiles.map(\.label))
         var label = base
         var counter = 2
@@ -179,11 +215,11 @@ final class ProfileManager {
             label = "\(base) \(counter)"
             counter += 1
         }
-        return try addProfile(named: label)
+        return try addProfile(named: label, app: app)
     }
 
     func renameProfile(id: UUID, to newLabel: String) throws {
-        guard id != ClaudeProfile.standard.id else { throw ProfileManagerError.builtInProfile }
+        guard !ClaudeProfile.isBuiltIn(id: id) else { throw ProfileManagerError.builtInProfile }
         guard let index = profiles.firstIndex(where: { $0.id == id }) else {
             throw ProfileManagerError.profileNotFound
         }
@@ -197,9 +233,10 @@ final class ProfileManager {
     /// Its data directory is deliberately left on disk: it holds the account's
     /// login and conversations, and deletion is destructive.
     func removeProfile(id: UUID) throws {
-        guard id != ClaudeProfile.standard.id else { throw ProfileManagerError.builtInProfile }
+        guard !ClaudeProfile.isBuiltIn(id: id) else { throw ProfileManagerError.builtInProfile }
         stop(id: id)
         profiles.removeAll { $0.id == id }
+        releaseUnlistedBuiltIns()
         try persist()
     }
 
@@ -219,6 +256,7 @@ final class ProfileManager {
             stop(id: id)
         }
         profiles = snapshot
+        releaseUnlistedBuiltIns()
         do {
             try persist()
         } catch {
@@ -248,20 +286,25 @@ final class ProfileManager {
             throw ProfileManagerError.stopInProgress
         }
 
-        guard FileManager.default.fileExists(atPath: claudeBundleURL.path) else {
-            throw ProfileManagerError.bundleMissing(path: claudeBundleURL.path)
+        let bundle = bundleURL(for: profile.app)
+        switch profile.app.bundleStatus(at: bundle) {
+        case .available:
+            break
+        case .missing:
+            throw ProfileManagerError.bundleMissing(app: profile.app, path: bundle.path)
+        case .unsupported:
+            throw ProfileManagerError.unsupportedBundle(app: profile.app, path: bundle.path)
         }
 
-        // Create the profile's data directory lazily; Claude builds its own
+        // Create the profile's data directory lazily; the app builds its own
         // layout (Local Storage, cookies, config, sessions) on first run.
         if let directory = profile.location.dataDirectory {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
 
-        let executable = claudeBundleURL
-            .appendingPathComponent("Contents/MacOS/Claude")
         let handle = try launcher.launch(
-            executable: executable,
+            app: profile.app,
+            executable: bundle.appendingPathComponent(profile.app.executablePath),
             location: profile.location
         )
         attach(handle: handle, to: id)
@@ -356,26 +399,25 @@ final class ProfileManager {
 
     // MARK: Settings
 
-    /// Updates the Claude.app location and persists it. An empty path (or the
+    /// Updates an app's location and persists it. An empty path (or the
     /// default path) clears the override so the standard location is used.
-    func setBundlePath(_ path: String) {
+    func setBundlePath(_ path: String, for app: ManagedApp) {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty || trimmed == Self.defaultBundleURL.path {
-            defaults.removeObject(forKey: Self.bundlePathDefaultsKey)
-            claudeBundleURL = Self.defaultBundleURL
-        } else {
-            defaults.set(trimmed, forKey: Self.bundlePathDefaultsKey)
-            claudeBundleURL = URL(fileURLWithPath: trimmed, isDirectory: true)
+        guard !trimmed.isEmpty, trimmed != app.defaultBundleURL.path else {
+            resetBundlePath(for: app)
+            return
         }
+        defaults.set(trimmed, forKey: app.bundlePathDefaultsKey)
+        bundleURLs[app] = URL(fileURLWithPath: trimmed, isDirectory: true)
     }
 
-    func setBundleURL(_ url: URL) {
-        setBundlePath(url.path)
+    func setBundleURL(_ url: URL, for app: ManagedApp) {
+        setBundlePath(url.path, for: app)
     }
 
-    func resetBundlePath() {
-        defaults.removeObject(forKey: Self.bundlePathDefaultsKey)
-        claudeBundleURL = Self.defaultBundleURL
+    func resetBundlePath(for app: ManagedApp) {
+        defaults.removeObject(forKey: app.bundlePathDefaultsKey)
+        bundleURLs[app] = app.defaultBundleURL
     }
 
     func report(_ error: any Error) {
@@ -429,7 +471,8 @@ final class ProfileManager {
 enum ProfileManagerError: LocalizedError, Equatable {
     case invalidLabel
     case profileNotFound
-    case bundleMissing(path: String)
+    case bundleMissing(app: ManagedApp, path: String)
+    case unsupportedBundle(app: ManagedApp, path: String)
     case stopInProgress
     case builtInProfile
 
@@ -439,12 +482,14 @@ enum ProfileManagerError: LocalizedError, Equatable {
             return "Profile name cannot be empty."
         case .profileNotFound:
             return "That profile no longer exists."
-        case .bundleMissing(let path):
-            return "Claude.app was not found at \(path). Install Claude Desktop or fix the path in Settings."
+        case .bundleMissing(let app, let path):
+            return "\(app.bundleName) was not found at \(path). Install \(app.productName) or fix the path in Settings."
+        case .unsupportedBundle(let app, let path):
+            return "The app at \(path) cannot run separate \(app.name) profiles. ChatGPT Classic is not supported; install the current \(app.productName) app or fix the path in Settings."
         case .stopInProgress:
             return "This profile's previous instance is still shutting down; try again in a moment."
         case .builtInProfile:
-            return "Default Claude is built in and cannot be renamed or removed."
+            return "Default entries are built in and cannot be renamed or removed."
         }
     }
 }

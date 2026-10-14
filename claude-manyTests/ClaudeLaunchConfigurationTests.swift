@@ -84,4 +84,73 @@ final class ClaudeLaunchConfigurationTests: XCTestCase {
             XCTAssertNil(ClaudeLaunchConfiguration.dataDirectory(in: arguments), "\(arguments)")
         }
     }
+
+    // MARK: ChatGPT
+
+    func testChatGPTProfilesSelectStorageThroughEnvironmentAndArgv() {
+        let configuration = ClaudeLaunchConfiguration(app: .chatGPT,
+                                                      dataDirectory: URL(fileURLWithPath: "/Profiles/Work Account"))
+        let inherited = [
+            "PATH": "/usr/bin:/bin",
+            "CODEX_HOME": "/Users/example/.codex",
+            "CODEX_ELECTRON_USER_DATA_PATH": "/elsewhere"
+        ]
+        let environment = configuration.environment(inheriting: inherited)
+
+        XCTAssertEqual(configuration.arguments, ["--user-data-dir=/Profiles/Work Account"])
+        XCTAssertEqual(configuration.codeConfigurationDirectory?.path, "/Profiles/Work Account/.codex")
+        XCTAssertEqual(environment["CODEX_ELECTRON_USER_DATA_PATH"], "/Profiles/Work Account")
+        XCTAssertEqual(environment["CODEX_HOME"], "/Profiles/Work Account/.codex")
+        XCTAssertEqual(environment["PATH"], inherited["PATH"])
+    }
+
+    func testStandardChatGPTDropsInheritedLocationOverrides() {
+        let configuration = ClaudeLaunchConfiguration(app: .chatGPT, location: .standard)
+        let environment = configuration.environment(inheriting: [
+            "HOME": "/Users/example",
+            "CODEX_HOME": "/private-codex",
+            "CODEX_ELECTRON_USER_DATA_PATH": "/private-data"
+        ])
+
+        XCTAssertEqual(configuration.arguments, [])
+        XCTAssertNil(configuration.codeConfigurationDirectory)
+        XCTAssertNil(environment["CODEX_HOME"])
+        XCTAssertNil(environment["CODEX_ELECTRON_USER_DATA_PATH"])
+        XCTAssertEqual(environment["HOME"], "/Users/example")
+    }
+
+    func testChatGPTDiscoveryRequiresEnvironmentAndArgvToAgree() throws {
+        let profileSwitch = "--user-data-dir=/Profiles/Work Account"
+        let profile = ClaudeInstanceLocation.isolated(
+            dataDirectory: URL(fileURLWithPath: "/Profiles/Work Account", isDirectory: true))
+        let variable = "CODEX_ELECTRON_USER_DATA_PATH="
+        let cases: [(arguments: [String], environment: [String], expected: ClaudeInstanceLocation?)] = [
+            ([], [], .standard),
+            ([], [variable + "  "], .standard),
+            ([profileSwitch], [variable + "/Profiles/Work Account"], profile),
+            ([profileSwitch], [variable + " /Profiles/Work Account/ "], profile),
+            // Packaged ChatGPT ignores the switch without the variable.
+            ([profileSwitch], [], nil),
+            ([], [variable + "/Profiles/Work Account"], nil),
+            ([profileSwitch], [variable + "/Profiles/Other"], nil),
+            ([profileSwitch], [variable + "Work Account"], nil),
+            ([profileSwitch], [variable + "/Profiles/Work Account", variable + "/Profiles/Other"], nil)
+        ]
+
+        for (arguments, environment, expected) in cases {
+            let snapshot = try XCTUnwrap(snapshot(arguments: ["/ChatGPT"] + arguments, environment: environment))
+            XCTAssertEqual(ClaudeLaunchConfiguration.location(of: snapshot, app: .chatGPT), expected,
+                           "\(arguments) \(environment)")
+        }
+    }
+
+    /// Lays out a KERN_PROCARGS2 buffer: argc, executable path, padding, argv, environment.
+    private func snapshot(arguments: [String], environment: [String]) -> ClaudeProcessSnapshot? {
+        var buffer = withUnsafeBytes(of: Int32(arguments.count)) { Array($0) }
+        buffer += Array(arguments[0].utf8) + [0, 0]
+        for entry in arguments + environment {
+            buffer += Array(entry.utf8) + [0]
+        }
+        return ClaudeProcessSnapshot(buffer: buffer)
+    }
 }

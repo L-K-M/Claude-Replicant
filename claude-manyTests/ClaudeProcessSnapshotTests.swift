@@ -7,10 +7,12 @@ final class ClaudeProcessSnapshotTests: XCTestCase {
         let legacy = try XCTUnwrap(ClaudeProcessSnapshot(buffer: prefix + Array("CLAUDE_USER_DATA_DIR=/old\0".utf8)))
         let empty = try XCTUnwrap(ClaudeProcessSnapshot(buffer: prefix + Array("CLAUDE_USER_DATA_DIR=\0".utf8)))
         let unrelated = try XCTUnwrap(ClaudeProcessSnapshot(buffer: prefix + Array("OTHER=CLAUDE_USER_DATA_DIR=/old\0".utf8)))
-        XCTAssertTrue(legacy.hasLegacyDataDirectoryOverride)
-        XCTAssertFalse(empty.hasLegacyDataDirectoryOverride)
-        XCTAssertFalse(unrelated.hasLegacyDataDirectoryOverride)
+        XCTAssertNil(ClaudeLaunchConfiguration.location(of: legacy, app: .claude))
+        XCTAssertEqual(ClaudeLaunchConfiguration.location(of: empty, app: .claude), .standard)
+        XCTAssertEqual(ClaudeLaunchConfiguration.location(of: unrelated, app: .claude), .standard)
         XCTAssertEqual(legacy.arguments, ["/Claude"])
+        XCTAssertEqual(unrelated.environmentValues(named: "CLAUDE_USER_DATA_DIR"), [])
+        XCTAssertEqual(legacy.environmentValues(named: "CLAUDE_USER_DATA_DIR"), ["/old"])
     }
 
     func testKernelPaddingSpacesAndEmptyArgumentsArePreserved() throws {

@@ -4,9 +4,9 @@ import Foundation
 struct ClaudeProcessSnapshot {
     let executablePath: String
     let arguments: [String]
-    let hasLegacyDataDirectoryOverride: Bool
-
-    private static let legacyOverridePrefix = Array("CLAUDE_USER_DATA_DIR=".utf8)
+    /// Launch-time `NAME=value` entries. The kernel's trailing apple[] strings,
+    /// such as `executable_path=`, are included; no app variable uses those names.
+    private let environment: [String]
 
     init?(buffer: [UInt8]) {
         let headerSize = MemoryLayout<Int32>.size
@@ -37,10 +37,15 @@ struct ClaudeProcessSnapshot {
 
         self.executablePath = executablePath
         self.arguments = arguments
-        // A legacy environment hint may belong to an older app that relocates storage.
-        // It cannot identify a safe default instance, even when no directory switch exists.
-        hasLegacyDataDirectoryOverride = buffer[index...].split(separator: 0).contains {
-            $0.starts(with: Self.legacyOverridePrefix) && $0.count > Self.legacyOverridePrefix.count
+        environment = buffer[index...].split(separator: 0).compactMap { String(bytes: $0, encoding: .utf8) }
+    }
+
+    /// Every value of `name`, in order. Callers decide how duplicates resolve.
+    func environmentValues(named name: String) -> [String] {
+        let prefix = name + "="
+        return environment.compactMap { entry in
+            guard entry.hasPrefix(prefix) else { return nil }
+            return String(entry.dropFirst(prefix.count))
         }
     }
 }

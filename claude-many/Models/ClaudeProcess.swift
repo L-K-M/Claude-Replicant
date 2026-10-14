@@ -27,17 +27,17 @@ extension ClaudeProcessHandle {
 /// Spawns `Process` instances. Injected into `ProfileManager`; tests replace
 /// this with a fake that records launches.
 protocol ClaudeLauncher: Sendable {
-    func launch(executable: URL, location: ClaudeInstanceLocation) throws -> ClaudeProcessHandle
-    /// Current-user standard and argv-selected isolated instances of `executable`.
-    func runningHandles(executable: URL) -> [ClaudeProcessHandle]
+    func launch(app: ManagedApp, executable: URL, location: ClaudeInstanceLocation) throws -> ClaudeProcessHandle
+    /// Current-user standard and isolated instances of `app` running `executable`.
+    func runningHandles(app: ManagedApp, executable: URL) -> [ClaudeProcessHandle]
     /// Brings the process's windows to the front (double-click "Open").
     func activate(handle: ClaudeProcessHandle)
 }
 
 /// Real launcher backed by Foundation's `Process`.
 struct RealClaudeLauncher: ClaudeLauncher {
-    func launch(executable: URL, location: ClaudeInstanceLocation) throws -> ClaudeProcessHandle {
-        let configuration = ClaudeLaunchConfiguration(location: location)
+    func launch(app: ManagedApp, executable: URL, location: ClaudeInstanceLocation) throws -> ClaudeProcessHandle {
+        let configuration = ClaudeLaunchConfiguration(app: app, location: location)
         if let directory = configuration.codeConfigurationDirectory {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
@@ -58,8 +58,8 @@ struct RealClaudeLauncher: ClaudeLauncher {
         )
     }
 
-    /// Never derive a location from legacy environment hints; ambiguous launches are excluded.
-    func runningHandles(executable: URL) -> [ClaudeProcessHandle] {
+    /// Ambiguous launches are excluded; see `ClaudeLaunchConfiguration.location(of:app:)`.
+    func runningHandles(app: ManagedApp, executable: URL) -> [ClaudeProcessHandle] {
         let target = executable.resolvingSymlinksInPath().path
         var result: [ClaudeProcessHandle] = []
         for (pid, startTime) in Self.allProcesses() {
@@ -69,8 +69,7 @@ struct RealClaudeLauncher: ClaudeLauncher {
             }
             guard let info = Self.processInfo(for: pid),
                    Self.executableMatches(info.executablePath, target: target),
-                  !info.hasLegacyDataDirectoryOverride,
-                  let location = ClaudeLaunchConfiguration.location(in: info.arguments) else {
+                  let location = ClaudeLaunchConfiguration.location(of: info, app: app) else {
                 continue
             }
             result.append(AttachedClaudeProcess(

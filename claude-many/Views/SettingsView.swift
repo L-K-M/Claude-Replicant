@@ -6,42 +6,8 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Claude Application") {
-                LabeledContent("Claude.app") {
-                    HStack(spacing: 8) {
-                        if manager.bundleExists {
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: manager.claudeBundleURL.path))
-                                .resizable()
-                                .frame(width: 20, height: 20)
-                        }
-                        Text(MacPlatform.homeRelativePath(of: manager.claudeBundleURL))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .textSelection(.enabled)
-                    }
-                }
-                HStack {
-                    Button("Choose…") {
-                        MacPlatform.chooseApplicationBundle { url in
-                            if let url { manager.setBundleURL(url) }
-                        }
-                    }
-                    Button("Reset to Default") {
-                        manager.resetBundlePath()
-                    }
-                    .disabled(manager.claudeBundleURL == ProfileManager.defaultBundleURL)
-                    Spacer()
-                    Label(
-                        manager.bundleExists ? "Found" : "Not found",
-                        systemImage: manager.bundleExists
-                            ? "checkmark.circle.fill"
-                            : "exclamationmark.triangle.fill"
-                    )
-                    .foregroundStyle(manager.bundleExists ? .green : .orange)
-                    .labelStyle(.titleAndIcon)
-                    .font(.callout)
-                }
+            ForEach(ManagedApp.allCases) { app in
+                applicationSection(for: app)
             }
 
             Section("Data") {
@@ -64,7 +30,7 @@ struct SettingsView: View {
             }
 
             Section {
-                Text("Isolated profiles keep local configuration under ~/Library/Application Support/Claude-Many/Profiles. Default Claude uses its normal data and settings. Claude manages cloud data through its own services.")
+                Text("Isolated profiles keep local configuration under ~/Library/Application Support/Claude-Many/Profiles. Default Claude and Default ChatGPT use their normal data and settings. Each app manages cloud data through its own services.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -72,5 +38,60 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 480)
         .padding()
+    }
+
+    private func applicationSection(for app: ManagedApp) -> some View {
+        let bundle = manager.bundleURL(for: app)
+        let status = manager.bundleStatus(for: app)
+        return Section("\(app.name) Application") {
+            LabeledContent(app.bundleName) {
+                HStack(spacing: 8) {
+                    if status != .missing {
+                        Image(nsImage: MacPlatform.applicationIcon(at: bundle))
+                            .resizable()
+                            .frame(width: 20, height: 20)
+                    }
+                    Text(MacPlatform.homeRelativePath(of: bundle))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+            }
+            HStack {
+                Button("Choose…") {
+                    MacPlatform.chooseApplicationBundle(named: app.bundleName) { url in
+                        if let url { manager.setBundleURL(url, for: app) }
+                    }
+                }
+                Button("Reset to Default") {
+                    manager.resetBundlePath(for: app)
+                }
+                .disabled(bundle == app.defaultBundleURL)
+                Spacer()
+                Label(
+                    statusTitle(status),
+                    systemImage: status == .available
+                        ? "checkmark.circle.fill"
+                        : "exclamationmark.triangle.fill"
+                )
+                .foregroundStyle(status == .available ? .green : .orange)
+                .labelStyle(.titleAndIcon)
+                .font(.callout)
+            }
+            if status == .unsupported {
+                Text("This build cannot run separate profiles. ChatGPT Classic is not supported; install the current \(app.productName) app.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func statusTitle(_ status: AppBundleStatus) -> String {
+        switch status {
+        case .available: return "Found"
+        case .missing: return "Not found"
+        case .unsupported: return "Unsupported"
+        }
     }
 }

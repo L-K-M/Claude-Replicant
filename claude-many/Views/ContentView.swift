@@ -15,15 +15,17 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if !manager.bundleExists {
-                missingBundleBanner
+            ForEach(manager.listedApps.filter { manager.bundleStatus(for: $0) != .available }) { app in
+                bundleBanner(for: app)
                 Divider()
             }
 
             List(selection: $selection) {
-                // The built-in Default entry sits outside the reorderable
-                // ForEach, so it always stays pinned at the top.
-                row(for: .standard)
+                // Built-in Default entries sit outside the reorderable
+                // ForEach, so they always stay pinned at the top.
+                ForEach(manager.builtInProfiles) { profile in
+                    row(for: profile)
+                }
 
                 ForEach(manager.profiles) { profile in
                     row(for: profile)
@@ -40,10 +42,14 @@ struct ContentView: View {
         .frame(minWidth: 460, minHeight: 260)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button(action: newProfile) {
+                Menu {
+                    ForEach(ManagedApp.allCases) { app in
+                        Button(app.newProfileTitle) { newProfile(app) }
+                    }
+                } label: {
                     Label("New Profile", systemImage: "plus")
                 }
-                .help("New Profile (⌘N)")
+                .help("New Profile (⌘N for Claude, ⌥⌘N for ChatGPT)")
             }
             ToolbarItem(placement: .status) {
                 Text(manager.statusSummary)
@@ -90,26 +96,33 @@ struct ContentView: View {
         ContentUnavailableView {
             Label("No Isolated Profiles", systemImage: "person.2")
         } description: {
-            Text("Default Claude uses your normal login.\nAdd an isolated profile to run another account alongside it.")
+            Text("Default Claude uses your normal login.\nAdd an isolated Claude or ChatGPT profile to run another account alongside it.")
         } actions: {
-            Button("New Profile (⌘N)", action: newProfile)
+            ForEach(ManagedApp.allCases) { app in
+                Button(app.newProfileTitle) { newProfile(app) }
+            }
         }
     }
 
-    private var missingBundleBanner: some View {
-        HStack(spacing: 10) {
+    /// Shown while a listed app is missing or is a build that cannot run profiles.
+    private func bundleBanner(for app: ManagedApp) -> some View {
+        let path = MacPlatform.homeRelativePath(of: manager.bundleURL(for: app))
+        let unsupported = manager.bundleStatus(for: app) == .unsupported
+        return HStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .symbolRenderingMode(.multicolor)
                 .font(.title2)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Claude.app was not found")
+                Text(unsupported ? "\(app.bundleName) cannot run profiles" : "\(app.bundleName) was not found")
                     .font(.headline)
-                Text("Expected at \(MacPlatform.homeRelativePath(of: manager.claudeBundleURL)). Profiles cannot start until you locate it.")
+                Text(unsupported
+                     ? "The app at \(path) is an unsupported build, such as ChatGPT Classic. Install the current \(app.productName) app or locate it."
+                     : "Expected at \(path). \(app.name) profiles cannot start until you locate it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Locate Claude.app…", action: locateBundle)
+            Button("Locate \(app.bundleName)…") { locateBundle(for: app) }
             Button("Settings…") { openSettings() }
         }
         .padding(.horizontal, 16)
@@ -135,8 +148,10 @@ struct ContentView: View {
         context.canReveal = !targets.isEmpty
         context.canCopyPath = targets.count == 1
         context.canDelete = !deletables.isEmpty
-        context.canStartAll = manager.bundleExists
-            && manager.listedProfiles.contains { !manager.isRunning(id: $0.id) }
+        let launchableApps = manager.listedApps.filter { manager.bundleStatus(for: $0) == .available }
+        context.canStartAll = manager.listedProfiles.contains {
+            launchableApps.contains($0.app) && !manager.isRunning(id: $0.id)
+        }
         context.canStopAll = manager.runningCount > 0
         context.openTitle = targets.count == 1 ? "Open “\(targets[0].label)”" : "Open \(targets.count) Profiles"
         context.stopTitle = runningTargets.count == 1 ? "Stop “\(runningTargets[0].label)”" : "Stop \(runningTargets.count) Profiles"
@@ -167,7 +182,7 @@ struct ContentView: View {
         let runningPart = manager.runningProfileIDs.sorted { $0.uuidString < $1.uuidString }
             .map(\.uuidString).joined()
         let editingPart = editingID?.uuidString ?? ""
-        let bundlePart = manager.bundleExists ? "1" : "0"
+        let bundlePart = ManagedApp.allCases.map { "\(manager.bundleStatus(for: $0))" }.joined(separator: ",")
         return [selectionPart, editingPart, profilePart, runningPart, bundlePart]
             .joined(separator: "|")
     }
@@ -187,7 +202,9 @@ struct ContentView: View {
     private func contextMenuContent(for ids: Set<UUID>) -> some View {
         let targets = manager.listedProfiles.filter { ids.contains($0.id) }
         if targets.isEmpty {
-            Button("New Profile", action: newProfile)
+            ForEach(ManagedApp.allCases) { app in
+                Button(app.newProfileTitle) { newProfile(app) }
+            }
         } else {
             if targets.count == 1 {
                 Button("Open “\(targets[0].label)”") { openProfiles(ids) }
@@ -219,10 +236,10 @@ struct ContentView: View {
 
     // MARK: Actions
 
-    private func newProfile() {
+    private func newProfile(_ app: ManagedApp) {
         var created: ClaudeProfile?
         performProfileEdit("New Profile") {
-            created = try manager.addUntitledProfile()
+            created = try manager.addUntitledProfile(for: app)
         }
         if let created {
             selection = [created.id]
@@ -263,9 +280,9 @@ struct ContentView: View {
         MacPlatform.revealInFinder(ProfileManager.profilesRootDirectory)
     }
 
-    private func locateBundle() {
-        MacPlatform.chooseApplicationBundle { url in
-            if let url { manager.setBundleURL(url) }
+    private func locateBundle(for app: ManagedApp) {
+        MacPlatform.chooseApplicationBundle(named: app.bundleName) { url in
+            if let url { manager.setBundleURL(url, for: app) }
         }
     }
 
@@ -300,7 +317,7 @@ struct ContentView: View {
     // MARK: Delete
 
     private func requestDelete(_ ids: Set<UUID>) {
-        let deletable = ids.subtracting([ClaudeProfile.standard.id])
+        let deletable = ids.filter { !ClaudeProfile.isBuiltIn(id: $0) }
         guard !deletable.isEmpty else { return }
         pendingDeleteIDs = deletable
         showingDeleteConfirm = true

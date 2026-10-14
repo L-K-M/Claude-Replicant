@@ -7,6 +7,7 @@ import XCTest
 /// so unchecked Sendable is safe here.
 final class FakeClaudeLauncher: ClaudeLauncher, @unchecked Sendable {
     struct LaunchRecord: Equatable {
+        let app: ManagedApp
         let executable: URL
         let location: ClaudeInstanceLocation
         var dataDirectory: URL? { location.dataDirectory }
@@ -15,8 +16,9 @@ final class FakeClaudeLauncher: ClaudeLauncher, @unchecked Sendable {
     private(set) var launches: [LaunchRecord] = []
     private(set) var launchedHandles: [FakeClaudeProcess] = []
     var shouldThrow: (any Error)?
-    /// Handles `runningHandles(executable:)` returns, simulating live Claude
-    /// processes discovered at load time (e.g. left over from a relaunch).
+    /// Handles `runningHandles(app:executable:)` returns for their app,
+    /// simulating live processes discovered at load time (e.g. left over
+    /// from a relaunch).
     var runningHandlesToReturn: [FakeClaudeProcess] = []
     /// When true, a launched process is already dead by the time launch()
     /// returns (it exited before the manager could attach its handler).
@@ -27,13 +29,13 @@ final class FakeClaudeLauncher: ClaudeLauncher, @unchecked Sendable {
     /// already succeeded — a later profile failing while earlier ones started.
     var errorAfterLaunchCount: (count: Int, error: any Error)?
 
-    func launch(executable: URL, location: ClaudeInstanceLocation) throws -> ClaudeProcessHandle {
+    func launch(app: ManagedApp, executable: URL, location: ClaudeInstanceLocation) throws -> ClaudeProcessHandle {
         if let errorAfterLaunchCount, launches.count >= errorAfterLaunchCount.count {
             throw errorAfterLaunchCount.error
         }
         if let shouldThrow { throw shouldThrow }
-        launches.append(LaunchRecord(executable: executable, location: location))
-        let handle = FakeClaudeProcess(dataDirectory: location.dataDirectory)
+        launches.append(LaunchRecord(app: app, executable: executable, location: location))
+        let handle = FakeClaudeProcess(app: app, dataDirectory: location.dataDirectory)
         launchedHandles.append(handle)
         if launchReturnsDeadHandle {
             handle.simulateExit()
@@ -41,9 +43,9 @@ final class FakeClaudeLauncher: ClaudeLauncher, @unchecked Sendable {
         return handle
     }
 
-    func runningHandles(executable: URL) -> [ClaudeProcessHandle] {
+    func runningHandles(app: ManagedApp, executable: URL) -> [ClaudeProcessHandle] {
         discoveryCalls += 1
-        return runningHandlesToReturn
+        return runningHandlesToReturn.filter { $0.app == app }
     }
 
     func activate(handle: ClaudeProcessHandle) {
@@ -53,6 +55,7 @@ final class FakeClaudeLauncher: ClaudeLauncher, @unchecked Sendable {
 
 final class FakeClaudeProcess: ClaudeProcessHandle, @unchecked Sendable {
     var processIdentifier: Int32 { 4242 }
+    let app: ManagedApp
     let dataDirectory: URL?
     private(set) var terminationRequested = false
     private(set) var forceKilled = false
@@ -63,7 +66,8 @@ final class FakeClaudeProcess: ClaudeProcessHandle, @unchecked Sendable {
     /// exits, so terminate() does not end the process by itself.
     var isRunning: Bool { !exited }
 
-    init(dataDirectory: URL? = nil) {
+    init(app: ManagedApp = .claude, dataDirectory: URL? = nil) {
+        self.app = app
         self.dataDirectory = dataDirectory
     }
 
@@ -165,7 +169,7 @@ final class ProfileManagerTests: XCTestCase {
 
     func testAddProfilePersistsImmediately() throws {
         let profile = try manager.addProfile(named: "Persisted")
-        let reloaded = ProfileManager(store: manager.store, launcher: launcher, claudeBundleURL: manager.claudeBundleURL)
+        let reloaded = ProfileManager(store: manager.store, launcher: launcher, claudeBundleURL: manager.bundleURL(for: .claude))
         reloaded.load()
         XCTAssertEqual(reloaded.profiles, [profile])
     }
@@ -210,7 +214,7 @@ final class ProfileManagerTests: XCTestCase {
         let profile = try manager.addProfile(named: "X")
         XCTAssertThrowsError(try manager.start(id: profile.id)) { error in
             XCTAssertEqual(error as? ProfileManagerError,
-                           .bundleMissing(path: tempDir.appendingPathComponent("Claude.app").path))
+                           .bundleMissing(app: .claude, path: tempDir.appendingPathComponent("Claude.app").path))
         }
         XCTAssertEqual(launcher.launches.count, 0)
         XCTAssertFalse(manager.isRunning(id: profile.id))
@@ -419,17 +423,17 @@ final class ProfileManagerTests: XCTestCase {
     // MARK: Untitled naming / reorder / restore
 
     func testAddUntitledProfileNumbersPlaceholders() throws {
-        let first = try manager.addUntitledProfile()
-        let second = try manager.addUntitledProfile()
+        let first = try manager.addUntitledProfile(for: .claude)
+        let second = try manager.addUntitledProfile(for: .claude)
         try manager.renameProfile(id: first.id, to: "Work")
-        // "New Profile" is free again after the rename, so it gets reused.
-        let third = try manager.addUntitledProfile()
-        let fourth = try manager.addUntitledProfile()
+        // "New Claude Profile" is free again after the rename, so it gets reused.
+        let third = try manager.addUntitledProfile(for: .claude)
+        let fourth = try manager.addUntitledProfile(for: .claude)
 
         XCTAssertEqual(manager.profiles.first { $0.id == first.id }?.label, "Work")
-        XCTAssertEqual(second.label, "New Profile 2")
-        XCTAssertEqual(third.label, "New Profile")
-        XCTAssertEqual(fourth.label, "New Profile 3")
+        XCTAssertEqual(second.label, "New Claude Profile 2")
+        XCTAssertEqual(third.label, "New Claude Profile")
+        XCTAssertEqual(fourth.label, "New Claude Profile 3")
         XCTAssertEqual(manager.profiles.count, 4)
     }
 
@@ -441,7 +445,7 @@ final class ProfileManagerTests: XCTestCase {
         try manager.moveProfiles(fromOffsets: IndexSet(integer: 0), toOffset: 3)
         XCTAssertEqual(manager.profiles.map(\.label), ["B", "C", "A"])
 
-        let reloaded = ProfileManager(store: manager.store, launcher: launcher, claudeBundleURL: manager.claudeBundleURL)
+        let reloaded = ProfileManager(store: manager.store, launcher: launcher, claudeBundleURL: manager.bundleURL(for: .claude))
         reloaded.load()
         XCTAssertEqual(reloaded.profiles.map(\.id), [b.id, c.id, a.id])
     }
@@ -458,7 +462,7 @@ final class ProfileManagerTests: XCTestCase {
         manager.restoreProfiles(snapshot)
         XCTAssertEqual(manager.profiles.map(\.label), ["A", "B"])
 
-        let reloaded = ProfileManager(store: manager.store, launcher: launcher, claudeBundleURL: manager.claudeBundleURL)
+        let reloaded = ProfileManager(store: manager.store, launcher: launcher, claudeBundleURL: manager.bundleURL(for: .claude))
         reloaded.load()
         XCTAssertEqual(reloaded.profiles, snapshot, "undo restore must persist")
     }
@@ -525,25 +529,25 @@ final class ProfileManagerTests: XCTestCase {
     // MARK: Bundle path persistence
 
     func testBundlePathPersistsAcrossManagerInstances() throws {
-        manager.setBundlePath("/opt/Claude.app")
-        XCTAssertEqual(manager.claudeBundleURL.path, "/opt/Claude.app")
+        manager.setBundlePath("/opt/Claude.app", for: .claude)
+        XCTAssertEqual(manager.bundleURL(for: .claude).path, "/opt/Claude.app")
 
         let reloaded = makeManagerWithoutBundleOverride()
-        XCTAssertEqual(reloaded.claudeBundleURL.path, "/opt/Claude.app",
+        XCTAssertEqual(reloaded.bundleURL(for: .claude).path, "/opt/Claude.app",
                        "a chosen bundle location must survive relaunch")
     }
 
     func testBundlePathResetClearsPersistence() throws {
-        manager.setBundlePath("/opt/Claude.app")
-        manager.resetBundlePath()
-        XCTAssertEqual(manager.claudeBundleURL, ProfileManager.defaultBundleURL)
+        manager.setBundlePath("/opt/Claude.app", for: .claude)
+        manager.resetBundlePath(for: .claude)
+        XCTAssertEqual(manager.bundleURL(for: .claude), ManagedApp.claude.defaultBundleURL)
 
         let reloaded = makeManagerWithoutBundleOverride()
-        XCTAssertEqual(reloaded.claudeBundleURL, ProfileManager.defaultBundleURL)
+        XCTAssertEqual(reloaded.bundleURL(for: .claude), ManagedApp.claude.defaultBundleURL)
     }
 
     func testBundlePathDefaultsToApplications() {
-        XCTAssertEqual(makeManagerWithoutBundleOverride().claudeBundleURL,
-                       ProfileManager.defaultBundleURL)
+        XCTAssertEqual(makeManagerWithoutBundleOverride().bundleURL(for: .claude),
+                       ManagedApp.claude.defaultBundleURL)
     }
 }

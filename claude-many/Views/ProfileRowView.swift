@@ -20,6 +20,11 @@ struct ProfileRowView: View {
                 .frame(width: 10, height: 10)
                 .accessibilityLabel(isRunning ? "Running" : "Stopped")
 
+            Image(nsImage: MacPlatform.applicationIcon(at: manager.bundleURL(for: profile.app)))
+                .resizable()
+                .frame(width: 24, height: 24)
+                .accessibilityLabel(profile.app.name)
+
             VStack(alignment: .leading, spacing: 2) {
                 if isEditing {
                     TextField("Profile Name", text: $draft)
@@ -50,17 +55,17 @@ struct ProfileRowView: View {
                     manager.stop(id: profile.id)
                 }
                 .buttonStyle(.bordered)
-                .help("Quit this Claude instance")
+                .help("Quit this \(profile.app.name) instance")
             } else {
                 Button("Start") {
                     do { try manager.start(id: profile.id) }
                     catch { manager.report(error) }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!manager.bundleExists)
+                .disabled(manager.bundleStatus(for: profile.app) != .available)
                 .help(profile.isDefault
-                      ? "Launch the normal Claude Desktop instance"
-                      : "Launch Claude Desktop with this profile's data directory")
+                      ? "Launch the normal \(profile.app.productName) instance"
+                      : "Launch \(profile.app.productName) with this profile's data directory")
             }
 
             Menu {
@@ -90,7 +95,7 @@ struct ProfileRowView: View {
 
     private var subtitle: String {
         if profile.isDefault {
-            return "Your normal Claude account and data"
+            return "Your normal \(profile.app.name) account and data"
         }
         return MacPlatform.homeRelativePath(of: profile.dataDirectory)
     }

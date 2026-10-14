@@ -9,12 +9,12 @@
 
 **Latest release:** v<!-- version -->1.0.0<!-- /version --> · [Download](https://github.com/L-K-M/claude-many/releases/latest)
 
-Run multiple Claude Desktop instances side by side on one Mac, each logged
-into a different account. There is no fixed limit — you add one profile per
-Claude login you have.
+Run multiple Claude Desktop or ChatGPT instances side by side on one Mac,
+each logged into a different account. There is no fixed limit — you add one
+profile per login you have.
 
 A tiny native macOS app (Swift/SwiftUI) that manages one private data
-directory per profile and launches Claude Desktop pointed at it.
+directory per profile and launches Claude Desktop or ChatGPT pointed at it.
 
 ## What it is
 
@@ -22,6 +22,9 @@ directory per profile and launches Claude Desktop pointed at it.
   normal Desktop login and Code settings, without directory overrides.
   Start/Stop and live status work for it too, including when you open Claude
   from the Dock. This built-in entry cannot be renamed or deleted.
+- **ChatGPT profiles** work the same way with the current ChatGPT app.
+  **Default ChatGPT** appears with your first ChatGPT profile and controls
+  your normal ChatGPT login. ChatGPT Classic is not supported.
 - **Profile manager** — add, rename, remove, start, and stop profiles. Each
   profile has a label, a Start/Stop control, and a running indicator.
 - **Unlimited profiles** — as many as you have accounts. Profiles and their
@@ -32,6 +35,7 @@ directory per profile and launches Claude Desktop pointed at it.
   sessions, so each instance logs in and stays logged in independently.
 - **Separate Code configuration** — each profile uses its own `.claude/`
   directory for Claude Code settings, history, plugins, and credentials.
+  ChatGPT profiles use their own `.codex/` for Codex settings and login.
 - **Native look** — SwiftUI, macOS 14+, universal binary. Ad-hoc signed, no
   developer account required.
 
@@ -69,6 +73,33 @@ Stopping a profile sends SIGTERM to its process (with a SIGKILL fallback
 after 5 seconds), terminating only that instance — other profiles and
 any separately launched Claude Desktop instances are unaffected.
 
+### ChatGPT
+
+The current ChatGPT app (`/Applications/ChatGPT.app`, bundle identifier
+`com.openai.codex`) is also an Electron app. For isolated profiles, Claude
+Replicant runs `Contents/MacOS/ChatGPT` with
+`CODEX_ELECTRON_USER_DATA_PATH` and `--user-data-dir=` both set to the
+profile directory, and `CODEX_HOME` set to `<profile directory>/.codex`.
+Packaged ChatGPT replaces the switch with the variable and keeps
+`CODEX_HOME` only alongside it. The switch is repeated for discovery, which
+adopts an instance only when argv and the variable agree. ChatGPT allows
+one instance per profile directory.
+
+**Default ChatGPT** runs without these variables, which are removed even
+when inherited. It is listed only while ChatGPT profiles exist, so Start All
+never opens ChatGPT just because it is installed.
+
+**ChatGPT Classic** (`com.openai.chat`, the native app that the current
+ChatGPT renames to `ChatGPT Classic.app`) is not supported. Every copy reads
+the same keychain login and it has no storage override, so its instances
+would share one account. Claude Replicant refuses to start ChatGPT profiles
+when Settings points at it.
+
+These variables were inspected in ChatGPT **26.1007.71326**, whose own code
+starts a second demo instance the same way. They are internal, not a
+documented API, and updates can change them. The gated ChatGPT smoke test
+checks the installed app; it does not verify signing in.
+
 ## Build
 
 Requires Xcode (developed with Xcode 26.6 / Swift 6.3.3 on macOS 26;
@@ -90,18 +121,21 @@ sizes, run `python3 scripts/generate-icons.py` with Pillow installed.
 
 ## Usage
 
-1. Quit other Claude instances before signing in to a new profile. Browser
-   sign-in and connector callbacks can otherwise reach the wrong instance.
-2. Launch Claude Replicant and press **⌘N** (File → New Profile, or the
-   toolbar **+**), then type a name such as "Work" and press Return.
+1. Quit other instances of the same app before signing in to a new
+   profile. Browser sign-in and connector callbacks can otherwise reach the
+   wrong instance.
+2. Launch Claude Replicant and press **⌘N** for a Claude profile or **⌥⌘N**
+   for a ChatGPT profile (File menu, or the toolbar **+**), then type a name
+   such as "Work" and press Return.
 3. Click **Start**, sign into that account, then **Stop** it before setting
    up another profile. Check which account your browser is signed into.
 4. Once each profile is signed in, start them together to work side by side —
    the **Profiles → Start All** menu item launches every profile at once.
    **Stop** quits that instance and preserves its login for next time.
 
-Use **Default Claude** for the account already signed in through the normal
-app. Its controls operate on that normal instance, not on an isolated profile.
+Use **Default Claude** or **Default ChatGPT** for the account already signed
+in through the normal app. Its controls operate on that normal instance, not
+on an isolated profile.
 
 When upgrading from the environment-variable launcher, quit existing Claude
 instances first. Desktop profile directories and logins are reused. Each
@@ -123,9 +157,9 @@ instances keep running and are adopted on the next launch.
 
 Deleting a profile only removes it from the list — the data directory stays
 on disk so nothing is lost (remove it manually if you truly want to delete
-the account data). Settings (**⌘,**) shows the Claude.app location with a
-**Choose…** picker if it is not installed in `/Applications`; the chosen
-path persists across launches.
+the account data). Settings (**⌘,**) shows the Claude.app and ChatGPT.app
+locations with a **Choose…** picker if either is not installed in
+`/Applications`; the chosen paths persist across launches.
 
 ## Tests
 
@@ -149,7 +183,9 @@ A **live smoke test** (in `claude-manyTests/SmokeTests.swift`) launches two
 real Claude instances against throwaway scratch directories under `/tmp`,
 verifies two processes, two windows, and two independently populated data
 directories, then stops both and verifies clean termination (a second variant
-verifies leftover-instance reconciliation across an app relaunch). It is
+verifies leftover-instance reconciliation across an app relaunch). A ChatGPT
+variant does the same with two ChatGPT profiles and is skipped unless the
+current ChatGPT app is in `/Applications`. It is
 gated so ordinary test runs never spawn real applications — either
 `CLAUDE_MANY_SMOKE=1` or the flag file below opts in (xcodebuild does not
 reliably pass env vars to hosted test processes, so the flag file is the
@@ -186,6 +222,10 @@ a draft GitHub release. The gated live smoke test is described under
 - **Local device pairing is disabled for relocated Desktop data directories**
   in Claude Desktop 2.31226.1. Other shared app services, such as Dock
   identity, sign-in callbacks, and logs, are not isolated by this launcher.
+- **ChatGPT profiles share some services.** Sign-in returns through local
+  ports 1455 and 1457, so finish one ChatGPT sign-in before starting
+  another. Connector (MCP) sign-ins may use one keychain entry for all
+  profiles. `codex://` links open in whichever instance macOS picks.
 - **No fixed limit** on the number of profiles beyond disk space and memory.
 - **Restarting the app adopts matching live profiles.** If Claude Replicant is
   quit while instances are still running, the next launch detects each

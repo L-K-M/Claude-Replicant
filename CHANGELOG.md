@@ -2,8 +2,12 @@
 
 ## Unreleased
 
-- No changes recorded yet. Earlier history lives in the commit log and any
-  GitHub releases; future changes will be noted here.
+- Run isolated ChatGPT profiles next to Claude ones. Only the current
+  ChatGPT app (`com.openai.codex`) is supported; ChatGPT Classic is refused.
+  Default ChatGPT appears with the first ChatGPT profile.
+- File → New ChatGPT Profile (⌥⌘N); the toolbar **+** offers both apps.
+  Untitled Claude profiles are now named "New Claude Profile".
+- Settings lists separate locations for Claude.app and ChatGPT.app.
 
 ## 1.0.0
 

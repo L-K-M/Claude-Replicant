@@ -52,8 +52,11 @@ struct ContentView: View {
                 .help("New Profile (⌘N for Claude, ⌥⌘N for ChatGPT)")
             }
             ToolbarItem(placement: .status) {
+                // macOS 26 wraps toolbar items in a glass capsule sized to
+                // the text; inset it so the label clears the rounded ends.
                 Text(manager.statusSummary)
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
             }
         }
         .task { await manager.monitorRunningProcesses() }

@@ -73,10 +73,12 @@ struct SettingsView: View {
         .padding()
     }
 
-    /// A failure is stale once the status has been read again.
+    /// A failure is stale once the status has changed, say after allowing
+    /// the app in System Settings.
     private func refreshLoginItemStatus() {
-        loginItemStatus = LoginItem.status
-        loginItemError = nil
+        let status = LoginItem.status
+        if status != loginItemStatus { loginItemError = nil }
+        loginItemStatus = status
     }
 
     private var opensAtLogin: Binding<Bool> {

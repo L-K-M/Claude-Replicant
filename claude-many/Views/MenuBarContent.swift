@@ -18,7 +18,8 @@ struct MenuBarLabel: View {
             .task {
                 // Launched at login, macOS may restore the app with its
                 // window closed: then the menu bar item is all there is.
-                manager.load()
+                // An open window loads the list itself.
+                if !ProfileCommandCenter.shared.context.hasWindow { manager.load() }
                 manager.openProfilesMarkedForLaunch()
                 await manager.monitorRunningProcesses()
             }

@@ -74,15 +74,15 @@ final class OpenAtLaunchTests: XCTestCase {
 
     func testOneFailingEntryDoesNotKeepTheOthersFromOpening() throws {
         let work = try manager.addProfile(named: "Work")
-        let personal = try manager.addProfile(named: "Personal")
+        _ = try manager.addProfile(named: "Research", app: .chatGPT)
+        manager.setOpensAtLaunch(true, id: ClaudeProfile.builtIn(for: .chatGPT).id)
         manager.setOpensAtLaunch(true, id: work.id)
-        manager.setOpensAtLaunch(true, id: personal.id)
-        launcher.errorAfterLaunchCount = (1, ProfileManagerError.profileNotFound)
 
+        // Listed before Work, Default ChatGPT fails: ChatGPT.app is missing.
         manager.openProfilesMarkedForLaunch()
 
-        XCTAssertEqual(launcher.launches.count, 1)
-        XCTAssertNotNil(manager.lastError, "the failure is reported")
+        XCTAssertEqual(launcher.launches.map(\.location), [work.location], "Work still opens")
+        XCTAssertNotNil(manager.lastError, "a failure is reported though a later entry started")
     }
 
     func testUndoingADeleteKeepsTheChoice() throws {

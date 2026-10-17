@@ -424,17 +424,20 @@ final class ProfileManager {
     /// Starts the marked entries that are not running, once per run of the
     /// app: the window can close and reopen without starting them again.
     /// Running ones are left alone, so a login launch pulls no window
-    /// forward.
+    /// forward. The first failure is reported after the rest have started,
+    /// since a successful start clears the error.
     func openProfilesMarkedForLaunch() {
         guard !didOpenLaunchProfiles else { return }
         didOpenLaunchProfiles = true
+        var firstFailure: (any Error)?
         for profile in listedProfiles where launchProfileIDs.contains(profile.id) && !isRunning(id: profile.id) {
             do {
                 try start(id: profile.id)
             } catch {
-                report(error)
+                firstFailure = firstFailure ?? error
             }
         }
+        if let firstFailure { report(firstFailure) }
     }
 
     // MARK: Settings

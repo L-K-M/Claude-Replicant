@@ -48,6 +48,9 @@ It also sets `CLAUDE_CONFIG_DIR` and `CLAUDE_SECURESTORAGE_CONFIG_DIR` to
 `<profile directory>/.claude`, keeping Code configuration and its credential
 namespace separate. Process discovery reads the directory from argv, so
 restarting Claude Replicant can adopt instances it previously launched.
+The app at the configured location must carry Claude Desktop's bundle
+identifier, `com.anthropic.claudefordesktop`; anything else is reported as
+the wrong app and is neither started nor watched.
 
 **Default Claude** runs the same executable with no `--user-data-dir`
 argument. Inherited `CLAUDE_USER_DATA_DIR`, `CLAUDE_CONFIG_DIR`, and

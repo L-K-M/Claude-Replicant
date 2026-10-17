@@ -257,6 +257,7 @@ final class ProfileManager {
         guard !ClaudeProfile.isBuiltIn(id: id) else { throw ProfileManagerError.builtInProfile }
         stop(id: id)
         profiles.removeAll { $0.id == id }
+        closedForUpdateIDs.removeAll { $0 == id }
         releaseUnlistedBuiltIns()
         try persist()
     }
@@ -519,8 +520,10 @@ final class ProfileManager {
     }
 
     private func refreshInstalledVersions() {
+        // An unsupported build (ChatGPT Classic) has no version worth
+        // tracking: its instances cannot be restarted from here.
         for app in ManagedApp.allCases {
-            let version = app.bundleVersion(at: bundleURL(for: app))
+            let version = bundleStatus(for: app) == .unsupported ? nil : app.bundleVersion(at: bundleURL(for: app))
             if installedVersions[app] != version { installedVersions[app] = version }
         }
 

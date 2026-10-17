@@ -8,6 +8,9 @@
 - File → New ChatGPT Profile (⌥⌘N); the toolbar **+** offers both apps.
   Untitled Claude profiles are now named "New Claude Profile".
 - Settings lists separate locations for Claude.app and ChatGPT.app.
+- Copy Terminal Environment (row and context menus) copies an `export` line
+  that points `claude` or `codex` in Terminal at a profile's settings and
+  login.
 
 ## 1.0.0
 

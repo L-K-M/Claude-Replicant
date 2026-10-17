@@ -473,9 +473,11 @@ final class ProfileManagerTests: XCTestCase {
         try FileManager.default.createDirectory(at: manager.store.fileURL, withIntermediateDirectories: true)
         manager.load()
 
-        // The obstacle goes away, e.g. a sync tool finished.
+        // The obstacle goes away (e.g. a sync tool finished) and the window is reopened.
         try FileManager.default.removeItem(at: manager.store.fileURL)
         try FileManager.default.moveItem(at: blocker, to: manager.store.fileURL)
+        XCTAssertThrowsError(try manager.addProfile(named: "Early"), "no reload in the middle of a change")
+        manager.load()
         try manager.addProfile(named: "Work")
 
         XCTAssertEqual(manager.profiles.map(\.label), ["Saved", "Work"])

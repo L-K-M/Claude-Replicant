@@ -13,9 +13,9 @@ final class ProfileManager {
     private(set) var runningProfileIDs: Set<UUID> = []
     private(set) var lastError: String?
     private var bundleURLs: [ManagedApp: URL]
-    /// Why profiles.json exists but could not be opened at all (as opposed
-    /// to decoded). Saving would replace a list nobody has seen, so it is
-    /// refused until a later load succeeds.
+    /// Why profiles.json could not be opened at all (as opposed to decoded),
+    /// or could not be kept safely before rewriting. Saving would replace
+    /// it, so changes are refused until a later load succeeds.
     @ObservationIgnored private var unopenedProfileList: String?
 
     /// Claude is always listed; ChatGPT once it has a profile.
@@ -240,12 +240,10 @@ final class ProfileManager {
     }
 
     /// Changes are refused while the list on disk could not be opened or
-    /// set aside, before anything (a row, a running instance) is touched.
-    /// It is opened again first, so a passing obstacle does not block the
-    /// rest of the session.
+    /// kept safely, before anything (a row, a running instance) is touched.
+    /// The next `load()` (reopening the window or the app) tries again; a
+    /// reload in the middle of a change would leave undo with a stale list.
     private func ensureProfileListWritable() throws {
-        guard unopenedProfileList != nil else { return }
-        load()
         if let unopenedProfileList {
             throw ProfileManagerError.profileListUnavailable(reason: unopenedProfileList)
         }
@@ -309,8 +307,7 @@ final class ProfileManager {
     /// entry is not part of `profiles` and always stays first).
     func moveProfiles(fromOffsets source: IndexSet, toOffset destination: Int) throws {
         try ensureProfileListWritable()
-        // Reopening the list above can replace it; offsets from the old one may not fit.
-        guard source.allSatisfy(profiles.indices.contains), destination <= profiles.count else {
+        guard source.allSatisfy(profiles.indices.contains), (0...profiles.count).contains(destination) else {
             throw ProfileManagerError.profileNotFound
         }
         profiles.move(fromOffsets: source, toOffset: destination)
@@ -568,7 +565,7 @@ enum ProfileManagerError: LocalizedError, Equatable {
         case .builtInProfile:
             return "Default entries are built in and cannot be renamed or removed."
         case .profileListUnavailable(let reason):
-            return "Your profile list was left as it is (\(reason)), and changes are not saved until it can be read and kept safely."
+            return "Your profile list was left as it is (\(reason)). Changes are not saved; fix the file, then quit and reopen Claude Replicant."
         }
     }
 }

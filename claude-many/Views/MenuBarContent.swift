@@ -33,7 +33,7 @@ struct MenuBarContent: View {
 
         ForEach(manager.listedProfiles) { profile in
             Button {
-                manager.open(id: profile.id)
+                perform { manager.open(id: profile.id) }
             } label: {
                 Label {
                     Text(profile.label)
@@ -48,21 +48,20 @@ struct MenuBarContent: View {
         if !running.isEmpty {
             Menu("Stop") {
                 ForEach(running) { profile in
-                    Button(profile.label) { manager.stop(id: profile.id) }
+                    Button(profile.label) { perform { manager.stop(id: profile.id) } }
                 }
                 Divider()
                 Button("Stop All") { manager.stopAll() }
             }
         }
-        Button("Start All") { manager.startAll() }
-            .disabled(running.count == manager.listedProfiles.count)
+        Button("Start All") { perform { manager.startAll() } }
+            .disabled(!manager.listedProfiles.contains {
+                manager.bundleStatus(for: $0.app) == .available && !manager.isRunning(id: $0.id)
+            })
 
         Divider()
 
-        Button("Open \(AppBranding.name)") {
-            NSApp.activate()
-            openWindow(id: AppBranding.mainWindowID)
-        }
+        Button("Open \(AppBranding.name)", action: showWindow)
         Button("Settings…") {
             NSApp.activate()
             openSettings()
@@ -73,6 +72,17 @@ struct MenuBarContent: View {
 
         Button("Quit \(AppBranding.name)") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
+    }
+
+    private func showWindow() {
+        NSApp.activate()
+        openWindow(id: AppBranding.mainWindowID)
+    }
+
+    /// Errors are shown as an alert in the window, which may be closed.
+    private func perform(_ action: () -> Void) {
+        action()
+        if manager.lastError != nil { showWindow() }
     }
 }
 

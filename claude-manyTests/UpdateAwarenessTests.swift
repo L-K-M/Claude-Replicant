@@ -175,7 +175,43 @@ final class UpdateAwarenessTests: XCTestCase {
         XCTAssertEqual(manager.profilesClosedForUpdate.map(\.id), [quit.id], "a stop is not a quit for an update")
     }
 
+    func testDeletingAProfileDropsItsReport() async throws {
+        try installClaude(version: "1.0")
+        let (work, process) = try startProfile()
+        process.simulateExit()
+        await drainMainQueue()
+        try installClaude(version: "1.1")
+        manager.refreshRunningProcesses()
+
+        try manager.removeProfile(id: work.id)
+        manager.restoreProfiles([work])
+
+        XCTAssertEqual(manager.profilesClosedForUpdate, [], "a deleted profile's notice does not come back")
+    }
+
     // MARK: Versions
+
+    func testAnUnsupportedBuildReportsNoVersion() throws {
+        let contents = root.appendingPathComponent("ChatGPT.app/Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: contents.appendingPathComponent("MacOS", isDirectory: true),
+                                                withIntermediateDirectories: true)
+        let info = try PropertyListSerialization.data(
+            fromPropertyList: ["CFBundleIdentifier": "com.openai.chat", "CFBundleShortVersionString": "1.2025"],
+            format: .xml, options: 0)
+        try info.write(to: contents.appendingPathComponent("Info.plist"))
+        let classicManager = ProfileManager(
+            store: ProfileStore(fileURL: root.appendingPathComponent("profiles.json")),
+            launcher: launcher,
+            claudeBundleURL: root.appendingPathComponent("Claude.app"),
+            chatGPTBundleURL: root.appendingPathComponent("ChatGPT.app"),
+            defaults: UserDefaults(suiteName: defaultsSuiteName)!,
+            dataRootDirectory: root.appendingPathComponent("Profiles")
+        )
+
+        classicManager.refreshRunningProcesses()
+
+        XCTAssertNil(classicManager.installedVersion(of: .chatGPT), "ChatGPT Classic cannot run profiles")
+    }
 
     func testVersionsNewerThanTheCheckedOneAreFlagged() {
         XCTAssertFalse(ManagedApp.claude.isNewerThanChecked(ManagedApp.claude.checkedVersion))

@@ -44,6 +44,17 @@ enum MacPlatform {
         revealInFinder([url])
     }
 
+    /// The root is created lazily; make it exist so Finder has something
+    /// real to show.
+    @MainActor
+    static func revealProfilesFolder() {
+        try? FileManager.default.createDirectory(
+            at: ProfileManager.profilesRootDirectory,
+            withIntermediateDirectories: true
+        )
+        revealInFinder(ProfileManager.profilesRootDirectory)
+    }
+
     private static func existingAncestor(of url: URL) -> URL {
         var candidate = url
         let fm = FileManager.default

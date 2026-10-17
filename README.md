@@ -18,7 +18,8 @@ directory per profile and launches Claude Desktop or ChatGPT pointed at it.
 
 ## Install
 
-Download the DMG or ZIP from the latest release and move
+Download the DMG or ZIP from the
+[latest release](https://github.com/L-K-M/Claude-Replicant/releases/latest) and move
 `Claude Replicant.app` to `/Applications`. The app is ad-hoc signed, not
 notarized, so macOS blocks its first launch:
 

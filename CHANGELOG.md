@@ -8,6 +8,8 @@
 - File → New ChatGPT Profile (⌥⌘N); the toolbar **+** offers both apps.
   Untitled Claude profiles are now named "New Claude Profile".
 - Settings lists separate locations for Claude.app and ChatGPT.app.
+- README and release notes describe the macOS 15 first launch (Open
+  Anyway in Privacy & Security); Control-click → Open no longer works there.
 
 ## 1.0.0
 

@@ -147,7 +147,7 @@ final class ProfileManager {
         let problem = count == 1
             ? "1 profile could not be read and was left out."
             : "\(count) profiles could not be read and were left out."
-        guard setAsideUnreadableList(.copy, problem: problem) != nil else { return }
+        guard setAsideUnreadableList(.copy, problem: problem) else { return }
 
         // Start the new file with everything that was readable.
         do {
@@ -160,22 +160,23 @@ final class ProfileManager {
     }
 
     /// The next save would replace a list that still holds unreadable
-    /// entries, so move it aside first and say where it went.
+    /// entries, so move it aside first and say where it went. Returns
+    /// whether the list may be written now: its original is kept, or gone.
     @discardableResult
-    private func setAsideUnreadableList(_ method: ProfileStore.SetAside, problem: String) -> URL? {
+    private func setAsideUnreadableList(_ method: ProfileStore.SetAside, problem: String) -> Bool {
         do {
             let copy = try store.setAsideUnreadableFile(method)
             lastError = "\(problem) The original was kept at \(copy.path). Profile data folders were not changed."
-            return copy
+            return true
         } catch where !FileManager.default.fileExists(atPath: store.fileURL.path) {
             // Removed since it was read (say, by a sync tool): no save can
             // overwrite it any more, so there is nothing left to protect.
             lastError = "\(problem) The file was removed before it could be kept. Profile data folders were not changed."
-            return nil
+            return true
         } catch {
             unopenedProfileList = error.localizedDescription
             lastError = "\(problem) It could not be set aside (\(error.localizedDescription)), so changes are not saved until it can be."
-            return nil
+            return false
         }
     }
 

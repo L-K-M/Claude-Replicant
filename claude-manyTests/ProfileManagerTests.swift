@@ -274,6 +274,8 @@ final class ProfileManagerTests: XCTestCase {
         try manager.renameProfile(id: first.id, to: "Work")
         // A second untitled profile must not get the folder name the first one gave up.
         let second = try manager.addUntitledProfile(for: .claude)
+        XCTAssertEqual(second.dataDirectory.lastPathComponent, "new-claude-profile-2",
+                       "a folder name is never handed out twice in a session")
         try manager.start(id: second.id)
         manager.stop(id: second.id)
         try manager.removeProfile(id: second.id)

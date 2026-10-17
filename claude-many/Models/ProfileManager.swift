@@ -280,6 +280,9 @@ final class ProfileManager {
             stop(id: id)
         }
         profiles = snapshot.map(keepingDataDirectoryInUse)
+        // Every name is claimed when handed out; restored ones stay claimed
+        // even if that changes.
+        claimedDataDirectories.formUnion(profiles.map(\.dataDirectory.path))
         releaseUnlistedBuiltIns()
         do {
             try persist()
@@ -295,13 +298,14 @@ final class ProfileManager {
     /// that exists now belongs to someone else and is never restored.
     private func keepingDataDirectoryInUse(_ restored: ClaudeProfile) -> ClaudeProfile {
         let fileManager = FileManager.default
-        guard let current = profiles.first(where: { $0.id == restored.id }),
-              current.dataDirectory != restored.dataDirectory,
+        guard let restoredDirectory = restored.location.dataDirectory,
+              let currentDirectory = profiles.first(where: { $0.id == restored.id })?.location.dataDirectory,
+              currentDirectory != restoredDirectory,
               handles[restored.id] != nil
-                || fileManager.fileExists(atPath: current.dataDirectory.path)
-                || fileManager.fileExists(atPath: restored.dataDirectory.path)
+                || fileManager.fileExists(atPath: currentDirectory.path)
+                || fileManager.fileExists(atPath: restoredDirectory.path)
         else { return restored }
-        return restored.withDataDirectory(current.dataDirectory)
+        return restored.withDataDirectory(currentDirectory)
     }
 
     // MARK: Start / stop

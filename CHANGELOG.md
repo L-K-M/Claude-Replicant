@@ -8,6 +8,9 @@
 - File → New ChatGPT Profile (⌥⌘N); the toolbar **+** offers both apps.
   Untitled Claude profiles are now named "New Claude Profile".
 - Settings lists separate locations for Claude.app and ChatGPT.app.
+- The list groups the pinned Default entries and your profiles under
+  headers, drops the zebra stripes, and shows the running count under the
+  window title instead of in a toolbar capsule.
 
 ## 1.0.0
 

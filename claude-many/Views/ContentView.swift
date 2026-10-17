@@ -23,23 +23,34 @@ struct ContentView: View {
             List(selection: $selection) {
                 // Built-in Default entries sit outside the reorderable
                 // ForEach, so they always stay pinned at the top.
-                ForEach(manager.builtInProfiles) { profile in
-                    row(for: profile)
+                Section("Default") {
+                    ForEach(manager.builtInProfiles) { profile in
+                        row(for: profile)
+                    }
                 }
 
-                ForEach(manager.profiles) { profile in
-                    row(for: profile)
-                }
-                .onMove(perform: moveProfiles)
+                Section("Profiles") {
+                    ForEach(manager.profiles) { profile in
+                        row(for: profile)
+                    }
+                    .onMove(perform: moveProfiles)
 
-                if manager.profiles.isEmpty {
-                    emptyState
+                    if manager.profiles.isEmpty {
+                        emptyState
+                            .frame(maxWidth: .infinity)
+                            .listRowSeparator(.hidden)
+                    }
                 }
             }
-            .listStyle(.inset(alternatesRowBackgrounds: true))
+            .listStyle(.inset)
             .contextMenu(forSelectionType: UUID.self, menu: contextMenuContent, primaryAction: openProfiles)
         }
-        .frame(minWidth: 460, minHeight: 260)
+        .frame(minWidth: 460, minHeight: 320)
+        // The running count belongs under the window title, where the
+        // README says it is; a toolbar status item needed padding hacks
+        // inside macOS 26's glass capsules.
+        .navigationTitle(AppBranding.name)
+        .navigationSubtitle(manager.statusSummary)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
@@ -50,13 +61,6 @@ struct ContentView: View {
                     Label("New Profile", systemImage: "plus")
                 }
                 .help("New Profile (⌘N for Claude, ⌥⌘N for ChatGPT)")
-            }
-            ToolbarItem(placement: .status) {
-                // macOS 26 wraps toolbar items in a glass capsule sized to
-                // the text; inset it so the label clears the rounded ends.
-                Text(manager.statusSummary)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 12)
             }
         }
         .task { await manager.monitorRunningProcesses() }

@@ -196,7 +196,7 @@ final class ProfileManager {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ProfileManagerError.invalidLabel }
 
-        let dataDirectory = makeUniqueDataDirectory(for: trimmed)
+        let dataDirectory = makeUniqueDataDirectory(for: trimmed, avoiding: Set(profiles.map(\.dataDirectory.path)))
         let profile = ClaudeProfile(label: trimmed, app: app, dataDirectory: dataDirectory)
         profiles.append(profile)
         try persist()
@@ -236,13 +236,15 @@ final class ProfileManager {
     /// A folder that exists is never moved.
     private func renameUnusedDataDirectory(at index: Int) {
         let profile = profiles[index]
-        guard let current = profile.location.dataDirectory,
+        guard handles[profile.id] == nil,
+              let current = profile.location.dataDirectory,
               current.deletingLastPathComponent().standardizedFileURL.path == dataRootDirectory.standardizedFileURL.path,
               !FileManager.default.fileExists(atPath: current.path) else { return }
 
         let base = Self.slug(for: profile.label)
         guard current.lastPathComponent != base else { return }
-        let directory = makeUniqueDataDirectory(for: profile.label, excluding: profile.id)
+        let others = profiles.filter { $0.id != profile.id }.map(\.dataDirectory.path)
+        let directory = makeUniqueDataDirectory(for: profile.label, avoiding: Set(others))
         guard directory.lastPathComponent != current.lastPathComponent else { return }
         profiles[index] = ClaudeProfile(id: profile.id, label: profile.label, app: profile.app, dataDirectory: directory)
     }
@@ -273,7 +275,7 @@ final class ProfileManager {
         for id in profiles.map(\.id) where !snapshotIDs.contains(id) {
             stop(id: id)
         }
-        profiles = snapshot.map(keepingDataDirectoryInUse)
+        profiles = withUniqueDataDirectories(snapshot.map(keepingDataDirectoryInUse))
         releaseUnlistedBuiltIns()
         do {
             try persist()
@@ -290,6 +292,31 @@ final class ProfileManager {
               FileManager.default.fileExists(atPath: current.dataDirectory.path),
               !FileManager.default.fileExists(atPath: restored.dataDirectory.path) else { return restored }
         return ClaudeProfile(id: restored.id, label: restored.label, app: restored.app, dataDirectory: current.dataDirectory)
+    }
+
+    /// A restored folder name may have been taken over since: another
+    /// profile renamed into the freed name and started there. The profile
+    /// that holds the folder now keeps it; the other gets a fresh name,
+    /// which is safe because its own folder was never created.
+    private func withUniqueDataDirectories(_ restored: [ClaudeProfile]) -> [ClaudeProfile] {
+        let currentFolders = Dictionary(profiles.map { ($0.id, $0.dataDirectory.path) }) { first, _ in first }
+        let holdsFolderNow = { (profile: ClaudeProfile) in currentFolders[profile.id] == profile.dataDirectory.path }
+        // Current holders claim first; the rest keep their snapshot order.
+        let order = restored.indices.filter { holdsFolderNow(restored[$0]) }
+            + restored.indices.filter { !holdsFolderNow(restored[$0]) }
+
+        var result = restored
+        var claimed: Set<String> = []
+        for index in order {
+            let profile = result[index]
+            if claimed.insert(profile.dataDirectory.path).inserted { continue }
+
+            let occupied = claimed.union(result.map(\.dataDirectory.path))
+            let directory = makeUniqueDataDirectory(for: profile.label, avoiding: occupied)
+            claimed.insert(directory.path)
+            result[index] = ClaudeProfile(id: profile.id, label: profile.label, app: profile.app, dataDirectory: directory)
+        }
+        return result
     }
 
     // MARK: Start / stop
@@ -459,12 +486,12 @@ final class ProfileManager {
     // MARK: Helpers
 
     /// Builds a unique, filesystem-friendly directory name for a new profile.
-    private func makeUniqueDataDirectory(for label: String, excluding excludedID: UUID? = nil) -> URL {
+    /// `occupied` holds the data folder paths other profiles already use.
+    private func makeUniqueDataDirectory(for label: String, avoiding occupied: Set<String>) -> URL {
         let base = Self.slug(for: label)
         var candidate = base
         var counter = 2
 
-        let occupied = Set(profiles.filter { $0.id != excludedID }.map { $0.dataDirectory.path })
         while FileManager.default.fileExists(atPath: dataRootDirectory
             .appendingPathComponent(candidate).path)
             || occupied.contains(dataRootDirectory

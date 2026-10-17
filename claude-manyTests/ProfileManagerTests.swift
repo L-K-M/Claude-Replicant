@@ -201,6 +201,40 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(manager.profiles.first?.dataDirectory, profile.dataDirectory)
     }
 
+    func testUndoNeverLeavesTwoProfilesInOneFolder() throws {
+        try makeBundle()
+        let first = try manager.addUntitledProfile(for: .claude)
+        let second = try manager.addProfile(named: "Work")
+        let beforeSecondRename = manager.profiles
+        try manager.renameProfile(id: second.id, to: "Play")
+        let beforeFirstRename = manager.profiles
+        // "work" is free again, so the first profile takes it and starts there.
+        try manager.renameProfile(id: first.id, to: "Work")
+        try manager.start(id: first.id)
+        let folderInUse = try XCTUnwrap(manager.profiles.first { $0.id == first.id }).dataDirectory
+
+        manager.restoreProfiles(beforeFirstRename)
+        manager.restoreProfiles(beforeSecondRename)
+
+        let folders = manager.profiles.map(\.dataDirectory.path)
+        XCTAssertEqual(Set(folders).count, folders.count, "each profile needs its own folder: \(folders)")
+        XCTAssertEqual(manager.profiles.first { $0.id == first.id }?.dataDirectory, folderInUse,
+                       "the running profile keeps the folder it uses")
+        XCTAssertEqual(manager.profiles.first { $0.id == second.id }?.label, "Work")
+        XCTAssertEqual(try manager.store.load().map(\.dataDirectory), manager.profiles.map(\.dataDirectory))
+    }
+
+    func testRenameNeverRepointsARunningProfile() throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        // The folder was trashed in Finder while the instance runs.
+        try FileManager.default.removeItem(at: profile.dataDirectory)
+
+        try manager.renameProfile(id: profile.id, to: "Personal")
+        XCTAssertEqual(manager.profiles.first?.dataDirectory, profile.dataDirectory)
+    }
+
     func testUndoingARenameKeepsTheFolderAStartedProfileUses() throws {
         try makeBundle()
         let profile = try manager.addUntitledProfile(for: .claude)

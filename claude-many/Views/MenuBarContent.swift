@@ -80,11 +80,14 @@ struct MenuBarContent: View {
     }
 
     /// Errors are shown as an alert in the window, which may be closed.
-    /// Only a new error opens it, not one already waiting there.
+    /// Open it for a new error, or for any error while no window shows it;
+    /// an error already on screen does not steal focus again.
     private func perform(_ action: () -> Void) {
         let earlierError = manager.lastError
         action()
-        if let error = manager.lastError, error != earlierError { showWindow() }
+        guard let error = manager.lastError else { return }
+        let windowShown = NSApp.windows.contains { $0.isVisible && $0.canBecomeMain }
+        if error != earlierError || !windowShown { showWindow() }
     }
 }
 

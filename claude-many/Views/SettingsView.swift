@@ -64,8 +64,11 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        // Changed in System Settings meanwhile, perhaps.
+        // Approved or changed in System Settings meanwhile, perhaps.
         .onAppear { loginItemStatus = LoginItem.status }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            loginItemStatus = LoginItem.status
+        }
         .frame(width: 480)
         .padding()
     }

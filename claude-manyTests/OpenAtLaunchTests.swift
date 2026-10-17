@@ -53,6 +53,9 @@ final class OpenAtLaunchTests: XCTestCase {
 
         // The window reopening later must not start them again.
         relaunched.stopAll()
+        launcher.launchedHandles.forEach { $0.simulateExit() }
+        relaunched.refreshRunningProcesses()
+        XCTAssertFalse(relaunched.isRunning(id: work.id))
         relaunched.openProfilesMarkedForLaunch()
         XCTAssertEqual(launcher.launches.count, 2)
     }

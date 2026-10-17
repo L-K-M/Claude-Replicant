@@ -69,7 +69,8 @@ final class StopEscalationTests: XCTestCase {
         manager.stop(id: profile.id)
         process.simulateExit()
 
-        try await Task.sleep(for: Self.step * 4)
+        // Past both SIGTERM and SIGKILL times.
+        try await Task.sleep(for: Self.step * 2 + Self.killDelay)
 
         XCTAssertFalse(process.signaled)
         XCTAssertFalse(process.forceKilled)

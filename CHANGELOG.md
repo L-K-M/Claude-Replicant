@@ -12,8 +12,8 @@
   quit, instead of a Start button that fails. Restart (⌘R) quits and reopens a profile;
   Open or Start All during shutdown start it again once it has quit.
 - Stop asks the app to quit like ⌘Q, so it can save its state, then
-  sends SIGTERM after 10 seconds and SIGKILL after 30 (was SIGTERM, then
-  SIGKILL after 5 seconds). Force Quit ends a stopping instance at once. An instance that
+  sends SIGTERM 10 seconds and SIGKILL 30 seconds after Stop (was
+  SIGTERM, then SIGKILL after 5 seconds). Force Quit ends a stopping instance at once. An instance that
   not even SIGKILL ends shows as running again with an error instead of
   "Stopping…" forever.
 

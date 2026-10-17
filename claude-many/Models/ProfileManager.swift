@@ -164,7 +164,8 @@ final class ProfileManager {
     private func releaseUnlistedBuiltIns() {
         let listed = Set(listedProfiles.map(\.id))
         for (id, handle) in handles where ClaudeProfile.isBuiltIn(id: id) && !listed.contains(id) {
-            // A pending Stop keeps its handle until the process exits.
+            // A pending Stop keeps its handle until the process exits or
+            // the stop gives up.
             guard stopSupervisors[id] == nil else { continue }
             handle.terminationHandler = nil
             handles[id] = nil

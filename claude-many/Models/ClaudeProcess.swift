@@ -90,7 +90,9 @@ struct RealClaudeLauncher: ClaudeLauncher {
         NSApp.activate()
         NSApp.yieldActivation(to: app)
         _ = app.activate(from: .current, options: [.activateAllWindows])
-        Self.sendReopen(to: app.processIdentifier)
+        // Sending can stall on a hung instance; keep it off the main thread.
+        let pid = app.processIdentifier
+        DispatchQueue.global(qos: .userInitiated).async { Self.sendReopen(to: pid) }
     }
 
     /// Claude and ChatGPT keep running after their last window closes and
@@ -106,10 +108,8 @@ struct RealClaudeLauncher: ClaudeLauncher {
             transactionID: AETransactionID(kAnyTransactionID)
         )
         // Best effort: without it the instance is still in front.
-        _ = try? event.sendEvent(options: [.noReply], timeout: reopenEventTimeout)
+        _ = try? event.sendEvent(options: [.noReply], timeout: TimeInterval(kAEDefaultTimeout))
     }
-
-    private static let reopenEventTimeout: TimeInterval = 2
 
     // MARK: Process introspection
 

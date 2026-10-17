@@ -72,7 +72,10 @@ struct ContentView: View {
             Text(deleteAlertMessage)
         }
         .focusedSceneValue(\.profileCommands, commandContext)
-        .onAppear(perform: syncCommandContext)
+        .onAppear {
+            syncCommandContext()
+            createPendingProfile()
+        }
         // With the menu bar item the app outlives this window; the Profiles
         // menu must not act on a selection nobody can see.
         .onDisappear { ProfileCommandCenter.shared.context = ProfileCommandContext() }
@@ -147,6 +150,7 @@ struct ContentView: View {
         let deletables = targets.filter { !$0.isDefault }
         let runningTargets = targets.filter { manager.isRunning(id: $0.id) }
         var context = ProfileCommandContext()
+        context.hasWindow = true
         context.selectionCount = targets.count
         context.canOpen = !targets.isEmpty
         context.canStop = !runningTargets.isEmpty
@@ -251,6 +255,14 @@ struct ContentView: View {
             selection = [created.id]
             beginRename(created.id)
         }
+    }
+
+    /// File > New Profile chosen while the window was closed. Deferred a
+    /// turn so the window's profile list has loaded.
+    private func createPendingProfile() {
+        guard let app = ProfileCommandCenter.shared.pendingNewProfile else { return }
+        ProfileCommandCenter.shared.pendingNewProfile = nil
+        DispatchQueue.main.async { newProfile(app) }
     }
 
     /// "Open" acts like double-clicking a file: start a stopped instance or

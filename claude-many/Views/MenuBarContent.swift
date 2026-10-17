@@ -41,7 +41,8 @@ struct MenuBarContent: View {
                     Image(nsImage: MenuStatusImage.image(running: manager.isRunning(id: profile.id)))
                 }
             }
-            .disabled(manager.bundleStatus(for: profile.app) != .available)
+            // Bringing a running instance forward needs no app bundle.
+            .disabled(!manager.isRunning(id: profile.id) && manager.bundleStatus(for: profile.app) != .available)
         }
 
         let running = manager.listedProfiles.filter { manager.isRunning(id: $0.id) }
@@ -80,14 +81,17 @@ struct MenuBarContent: View {
     }
 
     /// Errors are shown as an alert in the window, which may be closed.
-    /// Open it for a new error, or for any error while no window shows it;
-    /// an error already on screen does not steal focus again.
+    /// Open it for this action's error; an error already on screen does not
+    /// steal focus again. An error left over while no window showed it is
+    /// dropped first, so it cannot open the window for an action that
+    /// succeeded.
     private func perform(_ action: () -> Void) {
+        let windowShown = NSApp.windows.contains { $0.isVisible && $0.canBecomeMain }
+        if !windowShown { manager.clearError() }
         let earlierError = manager.lastError
         action()
-        guard let error = manager.lastError else { return }
-        let windowShown = NSApp.windows.contains { $0.isVisible && $0.canBecomeMain }
-        if error != earlierError || !windowShown { showWindow() }
+        guard let error = manager.lastError, error != earlierError else { return }
+        showWindow()
     }
 }
 

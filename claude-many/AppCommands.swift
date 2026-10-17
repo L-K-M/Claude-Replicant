@@ -16,6 +16,9 @@ struct ProfileCommandContext {
     var canDelete: Bool = false
     var canStartAll: Bool = false
     var canStopAll: Bool = false
+    /// False while no window publishes a context, e.g. with only the menu
+    /// bar item showing.
+    var hasWindow: Bool = false
     var openTitle: String = "Open"
     var stopTitle: String = "Stop"
     var deleteTitle: String = "Delete Profile…"
@@ -54,6 +57,9 @@ extension FocusedValues {
 final class ProfileCommandCenter: ObservableObject {
     static let shared = ProfileCommandCenter()
     @Published var context = ProfileCommandContext()
+    /// A New Profile command chosen while the window was closed; the window
+    /// creates it when it appears.
+    var pendingNewProfile: ManagedApp?
 }
 
 struct ProfileCommands: Commands {
@@ -70,9 +76,9 @@ struct ProfileCommands: Commands {
     // own — every closure is a no-op when it does not apply.
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button(ManagedApp.claude.newProfileTitle) { context.newProfile(.claude) }
+            NewProfileButton(app: .claude, context: context)
                 .keyboardShortcut("n")
-            Button(ManagedApp.chatGPT.newProfileTitle) { context.newProfile(.chatGPT) }
+            NewProfileButton(app: .chatGPT, context: context)
                 .keyboardShortcut("n", modifiers: [.command, .option])
         }
 
@@ -105,6 +111,26 @@ struct ProfileCommands: Commands {
             Button("Claude Replicant Help") {
                 NSWorkspace.shared.open(AppBranding.helpURL)
             }
+        }
+    }
+}
+
+/// New profiles are named in the window, so this opens it first when only
+/// the menu bar item is showing. A view, for `openWindow`.
+private struct NewProfileButton: View {
+    let app: ManagedApp
+    let context: ProfileCommandContext
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button(app.newProfileTitle) {
+            guard !context.hasWindow else {
+                context.newProfile(app)
+                return
+            }
+            ProfileCommandCenter.shared.pendingNewProfile = app
+            NSApp.activate()
+            openWindow(id: AppBranding.mainWindowID)
         }
     }
 }

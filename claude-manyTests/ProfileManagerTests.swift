@@ -562,6 +562,14 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertFalse(manager.isRunning(id: ClaudeProfile.standard.id))
     }
 
+    func testInstancesStayAdoptedWhenTheBundleIsDeleted() throws {
+        XCTAssertEqual(manager.bundleStatus(for: .claude), .missing)
+        launcher.runningHandlesToReturn = [FakeClaudeProcess(app: .claude)]
+        manager.load()
+        XCTAssertTrue(manager.isRunning(id: ClaudeProfile.standard.id),
+                      "an instance whose bundle was removed must stay stoppable")
+    }
+
     func testAnotherAppChosenAsClaudeIsRefusedWithItsOwnError() throws {
         try writeClaudeInfo(identifier: "com.apple.Safari")
         let profile = try manager.addProfile(named: "Work")

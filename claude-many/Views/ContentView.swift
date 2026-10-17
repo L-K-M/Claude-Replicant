@@ -117,7 +117,7 @@ struct ContentView: View {
             title = "\(app.bundleName) cannot run profiles"
             detail = "The app at \(path) is an unsupported build, such as ChatGPT Classic. Install the current \(app.productName) app or locate it."
         case .otherApp:
-            title = "\(app.bundleName) is a different app"
+            title = "The chosen \(app.bundleName) is not \(app.productName)"
             detail = "The app at \(path) is not \(app.productName). \(app.name) profiles cannot start until you locate it."
         case .missing, .available:
             title = "\(app.bundleName) was not found"

@@ -11,6 +11,10 @@ final class ProfileManager {
 
     private(set) var profiles: [ClaudeProfile] = []
     private(set) var runningProfileIDs: Set<UUID> = []
+    /// Stopped by us, but the old process has not exited yet.
+    private var stoppingProfileIDs: Set<UUID> = []
+    /// Entries to start as soon as their stopping instance exits.
+    private var startsAfterExit: Set<UUID> = []
     private(set) var lastError: String?
     private var bundleURLs: [ManagedApp: URL]
 
@@ -270,6 +274,12 @@ final class ProfileManager {
         runningProfileIDs.contains(id)
     }
 
+    func state(of id: UUID) -> InstanceState {
+        if runningProfileIDs.contains(id) { return .running }
+        guard stoppingProfileIDs.contains(id) else { return .stopped }
+        return startsAfterExit.contains(id) ? .restarting : .stopping
+    }
+
     /// Launch only after a fresh scan, so an externally opened default instance is not duplicated.
     func start(id: UUID) throws {
         guard let profile = listedProfiles.first(where: { $0.id == id }) else {
@@ -339,14 +349,31 @@ final class ProfileManager {
     /// "Open" a profile like a document: starts it when stopped, or brings the
     /// existing instance's windows to the front when already running.
     func open(id: UUID) {
-        if isRunning(id: id), let handle = handles[id] {
-            launcher.activate(handle: handle)
-            return
+        switch state(of: id) {
+        case .running:
+            if let handle = handles[id] { launcher.activate(handle: handle) }
+        case .stopping, .restarting:
+            startsAfterExit.insert(id)
+        case .stopped:
+            do {
+                try start(id: id)
+            } catch {
+                report(error)
+            }
         }
-        do {
-            try start(id: id)
-        } catch {
-            report(error)
+    }
+
+    /// Quits the instance and starts it again once the old process has
+    /// exited, e.g. to pick up an app update. A stopped entry just starts.
+    func restart(id: UUID) {
+        switch state(of: id) {
+        case .running:
+            stop(id: id)
+            startsAfterExit.insert(id)
+        case .stopping, .restarting:
+            startsAfterExit.insert(id)
+        case .stopped:
+            open(id: id)
         }
     }
 
@@ -354,8 +381,10 @@ final class ProfileManager {
     /// has not exited within a few seconds. The UI reflects "stopped"
     /// immediately; internal bookkeeping is cleaned up when the process exits.
     func stop(id: UUID) {
+        if startsAfterExit.contains(id) { startsAfterExit.remove(id) }
         guard isRunning(id: id), let handle = handles[id] else { return }
         runningProfileIDs.remove(id)
+        stoppingProfileIDs.insert(id)
         forceKillTasks[id]?.cancel()
         handle.terminate()
 
@@ -378,6 +407,10 @@ final class ProfileManager {
     /// surfaced to the user.
     func startAll() {
         for profile in listedProfiles where !isRunning(id: profile.id) {
+            guard state(of: profile.id) == .stopped else {
+                startsAfterExit.insert(profile.id)
+                continue
+            }
             do {
                 try start(id: profile.id)
             } catch {
@@ -393,8 +426,16 @@ final class ProfileManager {
         guard handles[id] === handle else { return }
         handles[id] = nil
         runningProfileIDs.remove(id)
+        stoppingProfileIDs.remove(id)
         forceKillTasks[id]?.cancel()
         forceKillTasks[id] = nil
+
+        guard startsAfterExit.remove(id) != nil else { return }
+        do {
+            try start(id: id)
+        } catch {
+            report(error)
+        }
     }
 
     // MARK: Settings

@@ -147,6 +147,7 @@ struct ContentView: View {
         context.selectionCount = targets.count
         context.canOpen = !targets.isEmpty
         context.canStop = !runningTargets.isEmpty
+        context.canRestart = !runningTargets.isEmpty
         context.canRename = editingID == nil && targets.count == 1 && !targets[0].isDefault
         context.canReveal = !targets.isEmpty
         context.canCopyPath = targets.count == 1
@@ -158,10 +159,12 @@ struct ContentView: View {
         context.canStopAll = manager.runningCount > 0
         context.openTitle = targets.count == 1 ? "Open “\(targets[0].label)”" : "Open \(targets.count) Profiles"
         context.stopTitle = runningTargets.count == 1 ? "Stop “\(runningTargets[0].label)”" : "Stop \(runningTargets.count) Profiles"
+        context.restartTitle = runningTargets.count == 1 ? "Restart “\(runningTargets[0].label)”" : "Restart \(runningTargets.count) Profiles"
         context.deleteTitle = deleteTitle(for: deletables)
         context.newProfile = newProfile
         context.openSelected = { openProfiles(selection) }
         context.stopSelected = { stopProfiles(selection) }
+        context.restartSelected = { restartProfiles(selection) }
         context.renameSelected = {
             if targets.count == 1 { beginRename(targets[0].id) }
         }
@@ -216,6 +219,7 @@ struct ContentView: View {
             }
             if targets.contains(where: { manager.isRunning(id: $0.id) }) {
                 Button("Stop") { stopProfiles(ids) }
+                Button("Restart") { restartProfiles(ids) }
             }
             Divider()
             if targets.count == 1, !targets[0].isDefault {
@@ -263,6 +267,13 @@ struct ContentView: View {
     private func stopProfiles(_ ids: Set<UUID>) {
         for profile in manager.listedProfiles where ids.contains(profile.id) {
             manager.stop(id: profile.id)
+        }
+    }
+
+    /// Restarts only running entries; stopped ones stay stopped.
+    private func restartProfiles(_ ids: Set<UUID>) {
+        for profile in manager.listedProfiles where ids.contains(profile.id) && manager.isRunning(id: profile.id) {
+            manager.restart(id: profile.id)
         }
     }
 

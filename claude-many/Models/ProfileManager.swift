@@ -519,7 +519,9 @@ final class ProfileManager {
             guard result.utf8.count + character.utf8.count <= limit else { break }
             result.append(character)
         }
-        while result.hasSuffix("-") { result.removeLast() }
+        // By character: a dash fused with a mark after it ("-\u{FF9E}") is
+        // still a dangling dash.
+        while result.last?.unicodeScalars.first == "-" { result.removeLast() }
         return result
     }
 }

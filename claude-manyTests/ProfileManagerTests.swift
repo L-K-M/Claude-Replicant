@@ -144,6 +144,8 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(ProfileManager.slug(for: "Work \u{301}"), "work")
         XCTAssertEqual(ProfileManager.slug(for: "\u{301}Work"), "work")
         XCTAssertEqual(ProfileManager.slug(for: "a -\u{301}b"), "a-b")
+        // A halfwidth sound mark is a letter (Lm) that still fuses with a dash.
+        XCTAssertEqual(ProfileManager.slug(for: "Work-\u{FF9E}"), "work")
     }
 
     func testVeryLongNamesStillGetAFolderTheFileSystemAccepts() throws {
@@ -191,6 +193,21 @@ final class ProfileManagerTests: XCTestCase {
 
         let repaired = try XCTUnwrap(reloaded.profiles.first).dataDirectory
         XCTAssertEqual(repaired.lastPathComponent, capped.lastPathComponent + "-2")
+    }
+
+    func testARepairedFolderNeverTakesAnotherProfilesFolderName() throws {
+        let label = String(repeating: "Work", count: 70)
+        let overlong = manager.dataRootDirectory.appendingPathComponent(String(repeating: "work", count: 70), isDirectory: true)
+        // Saved, never started: its folder does not exist yet.
+        let capped = manager.dataRootDirectory.appendingPathComponent(ProfileManager.slug(for: label), isDirectory: true)
+        try manager.store.save([ClaudeProfile(label: "Other", dataDirectory: capped),
+                                ClaudeProfile(label: label, dataDirectory: overlong)])
+
+        let reloaded = makeManager()
+        reloaded.load()
+
+        XCTAssertEqual(reloaded.profiles.map(\.dataDirectory.lastPathComponent),
+                       [capped.lastPathComponent, capped.lastPathComponent + "-2"])
     }
 
     func testLegalFolderNamesAreNeverRepaired() throws {

@@ -42,7 +42,7 @@ struct SettingsView: View {
 
     private func applicationSection(for app: ManagedApp) -> some View {
         let bundle = manager.bundleURL(for: app)
-        let status = manager.bundleStatus(for: app)
+        let status = manager.lastKnownBundleStatus(for: app)
         return Section("\(app.name) Application") {
             LabeledContent(app.bundleName) {
                 HStack(spacing: 8) {

@@ -62,7 +62,7 @@ struct ProfileRowView: View {
                     catch { manager.report(error) }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(manager.bundleStatus(for: profile.app) != .available)
+                .disabled(manager.lastKnownBundleStatus(for: profile.app) != .available)
                 .help(profile.isDefault
                       ? "Launch the normal \(profile.app.productName) instance"
                       : "Launch \(profile.app.productName) with this profile's data directory")

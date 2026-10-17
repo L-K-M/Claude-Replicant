@@ -291,10 +291,15 @@ final class ProfileManager {
     /// Undoing a rename restores the old folder name, but if the profile
     /// was started since, its data now lives in the new folder. A folder
     /// that exists, or that a tracked instance uses, is never abandoned.
+    /// A profile only leaves a folder that does not exist, so an old folder
+    /// that exists now belongs to someone else and is never restored.
     private func keepingDataDirectoryInUse(_ restored: ClaudeProfile) -> ClaudeProfile {
+        let fileManager = FileManager.default
         guard let current = profiles.first(where: { $0.id == restored.id }),
               current.dataDirectory != restored.dataDirectory,
-              handles[restored.id] != nil || FileManager.default.fileExists(atPath: current.dataDirectory.path)
+              handles[restored.id] != nil
+                || fileManager.fileExists(atPath: current.dataDirectory.path)
+                || fileManager.fileExists(atPath: restored.dataDirectory.path)
         else { return restored }
         return restored.withDataDirectory(current.dataDirectory)
     }

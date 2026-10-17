@@ -253,6 +253,20 @@ final class ProfileManagerTests: XCTestCase {
                        "undo must not move a profile into another profile's leftover data")
     }
 
+    func testUndoNeverRestoresAFolderThatAppearedSince() throws {
+        let profile = try manager.addUntitledProfile(for: .claude)
+        let beforeRename = manager.profiles
+        try manager.renameProfile(id: profile.id, to: "Work")
+        let renamedFolder = try XCTUnwrap(manager.profiles.first).dataDirectory
+        // Something else created the old folder in the meantime, e.g. a restored backup.
+        try FileManager.default.createDirectory(at: profile.dataDirectory, withIntermediateDirectories: true)
+
+        manager.restoreProfiles(beforeRename)
+
+        XCTAssertEqual(manager.profiles.first?.label, profile.label)
+        XCTAssertEqual(manager.profiles.first?.dataDirectory, renamedFolder)
+    }
+
     func testUndoNeverPointsAProfileAtAnotherProfilesLeftoverFolder() throws {
         try makeBundle()
         let first = try manager.addUntitledProfile(for: .claude)

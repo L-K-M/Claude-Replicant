@@ -8,6 +8,7 @@ struct ProfileRowView: View {
     var nameFieldFocused: FocusState<Bool>.Binding
     let commitEditing: () -> Void
     let cancelEditing: () -> Void
+    let requestStart: () -> Void
     let requestRename: () -> Void
     let requestDelete: () -> Void
 
@@ -57,10 +58,7 @@ struct ProfileRowView: View {
                 .buttonStyle(.bordered)
                 .help("Quit this \(profile.app.name) instance")
             } else {
-                Button("Start") {
-                    do { try manager.start(id: profile.id) }
-                    catch { manager.report(error) }
-                }
+                Button("Start", action: requestStart)
                 .buttonStyle(.borderedProminent)
                 .disabled(manager.bundleStatus(for: profile.app) != .available)
                 .help(profile.isDefault

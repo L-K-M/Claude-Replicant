@@ -449,15 +449,23 @@ final class ProfileManager {
 
     /// Not even SIGKILL ended the process (it is stuck in the kernel). It
     /// still runs in the profile's folder, as discovery would report anyway,
-    /// so the entry counts as running again instead of "Stopping…" forever.
-    /// A start queued behind it is dropped, and the error names the process.
+    /// so a listed entry counts as running again instead of "Stopping…"
+    /// forever. A deleted profile's process is let go: no row shows it, and
+    /// discovery only adopts listed entries. A start queued behind it is
+    /// dropped, and the error names the process.
     private func giveUpStopping(id: UUID, handle: ClaudeProcessHandle) {
         guard handles[id] === handle else { return }
         stoppingProfileIDs.remove(id)
         startsAfterExit.remove(id)
         stopSupervisors[id] = nil
-        runningProfileIDs.insert(id)
+
         let label = listedProfiles.first { $0.id == id }?.label
+        if label == nil {
+            handle.terminationHandler = nil
+            handles[id] = nil
+        } else {
+            runningProfileIDs.insert(id)
+        }
         report(ProfileManagerError.didNotQuit(label: label, processIdentifier: handle.processIdentifier))
     }
 

@@ -122,6 +122,18 @@ final class StopEscalationTests: XCTestCase {
         XCTAssertTrue(error.contains("Work") && error.contains("\(process.processIdentifier)"), error)
     }
 
+    func testAStuckInstanceOfADeletedProfileIsLetGo() async throws {
+        let (profile, process) = try startProfile()
+        process.survivesKill = true
+        try manager.removeProfile(id: profile.id)
+        manager.forceQuit(id: profile.id)
+
+        try await eventually("the stop gives up") { manager.lastError != nil }
+
+        XCTAssertEqual(manager.runningCount, 0, "no row shows it, so it must not count")
+        XCTAssertEqual(manager.state(of: profile.id), .stopped)
+    }
+
     func testARestartingInstanceStartsAgainAfterForceQuit() async throws {
         let (profile, process) = try startProfile()
         manager.restart(id: profile.id)

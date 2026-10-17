@@ -224,6 +224,23 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(try manager.store.load().map(\.dataDirectory), manager.profiles.map(\.dataDirectory))
     }
 
+    func testUndoKeepsTheUsedFolderWhenTheOldNameExistsToo() throws {
+        try makeBundle()
+        let profile = try manager.addUntitledProfile(for: .claude)
+        let beforeRename = manager.profiles
+        try manager.renameProfile(id: profile.id, to: "Work")
+        try manager.start(id: profile.id)
+        let folderInUse = try XCTUnwrap(manager.profiles.first).dataDirectory
+        // A later profile used the freed placeholder folder and was deleted; its data stays.
+        try FileManager.default.createDirectory(at: try XCTUnwrap(beforeRename.first).dataDirectory,
+                                                withIntermediateDirectories: true)
+
+        manager.restoreProfiles(beforeRename)
+
+        XCTAssertEqual(manager.profiles.first?.dataDirectory, folderInUse,
+                       "undo must not move a profile into another profile's leftover data")
+    }
+
     func testRenameNeverRepointsARunningProfile() throws {
         try makeBundle()
         let profile = try manager.addProfile(named: "Work")

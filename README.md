@@ -7,7 +7,7 @@
 
 <img src="media-sources/app-icon.png" alt="Claude Replicant icon with paired JCVD portraits" width="160" align="right">
 
-**Latest release:** v<!-- version -->1.0.0<!-- /version --> · [Download](https://github.com/L-K-M/Claude-Replicant/releases/latest)
+**Latest release:** v<!-- version -->1.2.0<!-- /version --> · [Download](https://github.com/L-K-M/Claude-Replicant/releases/latest)
 
 Run multiple Claude Desktop or ChatGPT instances side by side on one Mac,
 each logged into a different account. There is no fixed limit — you add one

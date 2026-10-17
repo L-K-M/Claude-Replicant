@@ -15,10 +15,12 @@ struct UnlistedProfileData: Identifiable, Equatable, Sendable {
     /// A name for the restored profile from the folder's: "work-2" becomes
     /// "Work 2".
     var suggestedLabel: String {
-        let words = directory.lastPathComponent
+        let label = directory.lastPathComponent
             .split(separator: "-")
             .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-        return words.isEmpty ? Self.fallbackLabel : words.joined(separator: " ")
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return label.isEmpty ? Self.fallbackLabel : label
     }
 
     private static let fallbackLabel = "Restored Profile"

@@ -176,9 +176,10 @@ final class UnlistedDataTests: XCTestCase {
 
     func testFoldersNamedOnlyWithSeparatorsGetAName() throws {
         _ = try makeFolder("---")
+        _ = try makeFolder(" -")
         manager.load()
 
-        XCTAssertEqual(manager.unlistedData.first?.suggestedLabel, "Restored Profile")
+        XCTAssertEqual(manager.unlistedData.map(\.suggestedLabel), ["Restored Profile", "Restored Profile"])
     }
 
     func testRestoringAFolderAnInstanceStartedInSaysItIsInUse() throws {
@@ -203,6 +204,21 @@ final class UnlistedDataTests: XCTestCase {
 
         XCTAssertEqual(manager.profiles, [])
         XCTAssertEqual(manager.unlistedData.map(\.directory.lastPathComponent), ["work"])
+    }
+
+    func testAFolderTheSavedListStillNamesIsNeverOffered() async throws {
+        let work = try manager.addProfile(named: "Work")
+        try manager.start(id: work.id)
+        manager.stop(id: work.id)
+        launcher.launchedHandles.last?.simulateExit()
+        await drainMainQueue()
+        // Deleting fails to save, so profiles.json still lists Work.
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path) }
+
+        XCTAssertThrowsError(try manager.removeProfile(id: work.id))
+
+        XCTAssertEqual(manager.unlistedData, [], "trashing it would strand the profile on disk")
     }
 
     func testOnlyUnlistedFoldersCanBeRestored() throws {

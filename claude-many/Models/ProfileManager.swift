@@ -54,6 +54,9 @@ final class ProfileManager {
     /// The last scan left out folders untracked instances run in; scans
     /// repeat with discovery until they are free.
     @ObservationIgnored private var unlistedDataHeldByInstances = false
+    /// Folders the list on disk names, as comparable paths. Never offered as
+    /// unlisted, even when a failed save left `profiles` without them.
+    @ObservationIgnored private var savedDataDirectories: Set<String> = []
     private var handles: [UUID: ClaudeProcessHandle] = [:]
     /// Pending force-kill timers, one per stopped profile.
     private var forceKillTasks: [UUID: Task<Void, Never>] = [:]
@@ -132,6 +135,7 @@ final class ProfileManager {
         }
 
         let contents: ProfileStore.Contents
+        savedDataDirectories = []
         do {
             contents = try store.loadReadable()
             unopenedProfileList = nil
@@ -153,6 +157,7 @@ final class ProfileManager {
         }
 
         profiles = contents.profiles
+        savedDataDirectories = Self.comparablePaths(of: profiles)
         guard contents.unreadableCount > 0 else { return }
 
         let count = contents.unreadableCount
@@ -260,7 +265,13 @@ final class ProfileManager {
         if let unopenedProfileList {
             throw ProfileManagerError.profileListUnavailable(reason: unopenedProfileList)
         }
-        try store.save(profiles)
+        try save(profiles)
+    }
+
+    /// Writes `list` and remembers which folders the file now names.
+    private func save(_ list: [ClaudeProfile]) throws {
+        try store.save(list)
+        savedDataDirectories = Self.comparablePaths(of: list)
     }
 
     /// Changes are refused while the list on disk could not be opened or
@@ -324,8 +335,8 @@ final class ProfileManager {
         stop(id: id)
         profiles.removeAll { $0.id == id }
         releaseUnlistedBuiltIns()
-        rescanUnlistedData()
         try persist()
+        rescanUnlistedData()
     }
 
     /// Drag-to-reorder within the user-managed profiles (the built-in Default
@@ -356,12 +367,12 @@ final class ProfileManager {
         }
         profiles = snapshot
         releaseUnlistedBuiltIns()
-        rescanUnlistedData()
         do {
             try persist()
         } catch {
             lastError = "Could not save profiles: \(error.localizedDescription)"
         }
+        rescanUnlistedData()
         return true
     }
 
@@ -386,7 +397,7 @@ final class ProfileManager {
         let data = try currentUnlistedData(at: directory)
         let profile = ClaudeProfile(label: data.suggestedLabel, app: data.app, dataDirectory: data.directory)
         // Saved first: a failed save must leave the folder listed as unused.
-        try store.save(profiles + [profile])
+        try save(profiles + [profile])
         profiles.append(profile)
         rescanUnlistedData()
         return profile
@@ -462,7 +473,7 @@ final class ProfileManager {
 
         // Tracked instances are left to `unlistedData`, so a deleted
         // profile's folder shows up as soon as its instance exits.
-        var used = Set(profiles.map { Self.comparablePath($0.dataDirectory) })
+        var used = Self.comparablePaths(of: profiles).union(savedDataDirectories)
         var heldByInstances: Set<String> = []
         if !entries.isEmpty {
             let tracked = Set(handles.values.compactMap(\.dataDirectory).map(Self.comparablePath))
@@ -487,6 +498,10 @@ final class ProfileManager {
         guard let chatGPTConfiguration,
               FileManager.default.fileExists(atPath: chatGPTConfiguration.path) else { return .claude }
         return .chatGPT
+    }
+
+    private static func comparablePaths(of profiles: [ClaudeProfile]) -> Set<String> {
+        Set(profiles.map { comparablePath($0.dataDirectory) })
     }
 
     /// Paths compared so that one folder never counts as two: symlinks

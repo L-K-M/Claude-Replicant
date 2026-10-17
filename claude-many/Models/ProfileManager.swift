@@ -167,6 +167,11 @@ final class ProfileManager {
             let copy = try store.setAsideUnreadableFile(method)
             lastError = "\(problem) The original was kept at \(copy.path). Profile data folders were not changed."
             return copy
+        } catch where !FileManager.default.fileExists(atPath: store.fileURL.path) {
+            // Removed since it was read (say, by a sync tool): no save can
+            // overwrite it any more, so there is nothing left to protect.
+            lastError = "\(problem) The file was removed before it could be kept. Profile data folders were not changed."
+            return nil
         } catch {
             unopenedProfileList = error.localizedDescription
             lastError = "\(problem) It could not be set aside (\(error.localizedDescription)), so changes are not saved until it can be."
@@ -320,13 +325,15 @@ final class ProfileManager {
 
     /// Replaces the profile list wholesale. Used by Undo to restore a snapshot
     /// taken before a mutation. Persistence failure is reported, not thrown:
-    /// undo handlers must not fail.
-    func restoreProfiles(_ snapshot: [ClaudeProfile]) {
+    /// undo handlers must not fail. Returns false when the list could not be
+    /// changed at all, so the caller registers no redo for it.
+    @discardableResult
+    func restoreProfiles(_ snapshot: [ClaudeProfile]) -> Bool {
         do {
             try ensureProfileListWritable()
         } catch {
             report(error)
-            return
+            return false
         }
         let snapshotIDs = Set(snapshot.map(\.id))
         for id in profiles.map(\.id) where !snapshotIDs.contains(id) {
@@ -339,6 +346,7 @@ final class ProfileManager {
         } catch {
             lastError = "Could not save profiles: \(error.localizedDescription)"
         }
+        return true
     }
 
     // MARK: Start / stop

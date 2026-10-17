@@ -465,6 +465,24 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertTrue(isDirectory.boolValue, "the list that could not be opened must stay where it was")
     }
 
+    func testRefusedChangesNeitherQuitInstancesNorReportAsApplied() throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        let handle = try XCTUnwrap(launcher.launchedHandles.first)
+        try FileManager.default.removeItem(at: manager.store.fileURL)
+        try FileManager.default.createDirectory(at: manager.store.fileURL, withIntermediateDirectories: true)
+        manager.load()
+
+        XCTAssertThrowsError(try manager.removeProfile(id: profile.id))
+        XCTAssertFalse(handle.terminationRequested, "a refused delete must not quit the instance")
+        XCTAssertTrue(manager.isRunning(id: profile.id))
+
+        // Undo must learn the restore was refused, so it registers no redo.
+        XCTAssertFalse(manager.restoreProfiles([profile]))
+        XCTAssertEqual(manager.profiles, [])
+    }
+
     func testSavingResumesOnceTheListCanBeOpenedAgain() throws {
         let saved = ClaudeProfile(label: "Saved", dataDirectory: tempDir.appendingPathComponent("Profiles/saved", isDirectory: true))
         try manager.store.save([saved])

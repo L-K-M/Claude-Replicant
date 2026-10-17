@@ -149,7 +149,7 @@ enum ProfilesMenu {
 /// their key equivalents always match the window's real selection.
 @MainActor
 final class ProfilesMenuBridge: NSObject, NSMenuDelegate {
-    private var cancellable: AnyCancellable?
+    private var cancellables: Set<AnyCancellable> = []
     private var remainingAttempts = 20
     /// Items matched so far, kept after the bridge retitles them. Weak keys:
     /// items SwiftUI replaces go away, and new ones arrive with their
@@ -175,13 +175,22 @@ final class ProfilesMenuBridge: NSObject, NSMenuDelegate {
             return
         }
         sync(menu, with: ProfileCommandCenter.shared.context)
-        cancellable = ProfileCommandCenter.shared.$context
+        // Looked up each time: SwiftUI may rebuild the menu, for instance on
+        // a focus change, and a new menu auto-enables again with no
+        // delegate. Any menu opening (the menu bar included) re-syncs first.
+        ProfileCommandCenter.shared.$context
             .receive(on: RunLoop.main)
             .sink { [weak self] context in
-                // Looked up each time: SwiftUI may rebuild the menu.
                 guard let self, let menu = Self.profilesMenu() else { return }
                 self.sync(menu, with: context)
             }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)
+            .sink { [weak self] _ in
+                guard let self, let menu = Self.profilesMenu() else { return }
+                self.sync(menu, with: ProfileCommandCenter.shared.context)
+            }
+            .store(in: &cancellables)
     }
 
     private static func profilesMenu() -> NSMenu? {
@@ -202,7 +211,7 @@ final class ProfilesMenuBridge: NSObject, NSMenuDelegate {
             if let title, menuItem.title != title { menuItem.title = title }
             menuItem.isEnabled = isEnabled
         }
-        reportMissingItems(Set(ProfilesMenu.Item.allCases).subtracting(found))
+        reportMissingItems(Set(ProfilesMenu.Item.allCases).subtracting(found), in: menu)
     }
 
     private func match(_ menuItem: NSMenuItem) -> ProfilesMenu.Item? {
@@ -229,8 +238,9 @@ final class ProfilesMenuBridge: NSObject, NSMenuDelegate {
     }
 
     /// A renamed or removed command would silently stay enabled; say so once.
-    private func reportMissingItems(_ missing: Set<ProfilesMenu.Item>) {
-        guard !missing.isEmpty, !reportedMissingItems else { return }
+    /// An empty menu is one SwiftUI has not filled yet.
+    private func reportMissingItems(_ missing: Set<ProfilesMenu.Item>, in menu: NSMenu) {
+        guard !missing.isEmpty, !menu.items.isEmpty, !reportedMissingItems else { return }
         reportedMissingItems = true
         Self.logger.error("Profiles menu items not found: \(String(describing: missing), privacy: .public)")
     }

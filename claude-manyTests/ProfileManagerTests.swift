@@ -399,6 +399,35 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(manager.state(of: profile.id), .stopped)
     }
 
+    func testStopAllCancelsQueuedRestarts() async throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        manager.restart(id: profile.id)
+        XCTAssertTrue(manager.hasInstance(id: profile.id))
+
+        manager.stopAll()
+        XCTAssertEqual(manager.state(of: profile.id), .stopping)
+
+        try XCTUnwrap(launcher.launchedHandles.first).simulateExit()
+        await drainMainQueue()
+        XCTAssertEqual(launcher.launches.count, 1)
+        XCTAssertFalse(manager.hasInstance(id: profile.id))
+    }
+
+    func testAQueuedStartForAnEntryNoLongerListedIsDropped() async throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        manager.restart(id: profile.id)
+        try manager.removeProfile(id: profile.id)
+
+        try XCTUnwrap(launcher.launchedHandles.first).simulateExit()
+        await drainMainQueue()
+        XCTAssertNil(manager.lastError)
+        XCTAssertEqual(launcher.launches.count, 1)
+    }
+
     func testStartAllStartsStoppingProfilesOnceTheyExit() async throws {
         try makeBundle()
         let profile = try manager.addProfile(named: "Work")

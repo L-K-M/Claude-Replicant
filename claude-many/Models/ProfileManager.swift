@@ -274,6 +274,11 @@ final class ProfileManager {
         runningProfileIDs.contains(id)
     }
 
+    /// Running, or stopping with its old process still alive.
+    func hasInstance(id: UUID) -> Bool {
+        state(of: id) != .stopped
+    }
+
     func state(of id: UUID) -> InstanceState {
         if runningProfileIDs.contains(id) { return .running }
         guard stoppingProfileIDs.contains(id) else { return .stopped }
@@ -396,7 +401,9 @@ final class ProfileManager {
         forceKillTasks[id] = task
     }
 
+    /// Also cancels starts queued behind instances that are still quitting.
     func stopAll() {
+        if !startsAfterExit.isEmpty { startsAfterExit.removeAll() }
         for id in Array(runningProfileIDs) {
             stop(id: id)
         }
@@ -430,7 +437,8 @@ final class ProfileManager {
         forceKillTasks[id]?.cancel()
         forceKillTasks[id] = nil
 
-        guard startsAfterExit.remove(id) != nil else { return }
+        guard startsAfterExit.remove(id) != nil,
+              listedProfiles.contains(where: { $0.id == id }) else { return }
         do {
             try start(id: id)
         } catch {

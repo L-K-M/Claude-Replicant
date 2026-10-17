@@ -161,14 +161,17 @@ final class UnlistedDataTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: folder.path))
     }
 
-    func testFoldersAnUntrackedInstanceRunsInAreNotOffered() throws {
+    func testFoldersAnUntrackedInstanceRunsInAreOfferedOnceItQuits() throws {
         // Left running by a profile deleted before Claude Replicant relaunched.
         let folder = try makeFolder("work")
         launcher.runningHandlesToReturn = [FakeClaudeProcess(dataDirectory: folder)]
 
         manager.load()
-
         XCTAssertEqual(manager.unlistedData, [])
+
+        launcher.runningHandlesToReturn = []
+        manager.refreshRunningProcesses()
+        XCTAssertEqual(manager.unlistedData.map(\.directory.lastPathComponent), ["work"])
     }
 
     func testFoldersNamedOnlyWithSeparatorsGetAName() throws {
@@ -209,7 +212,9 @@ final class UnlistedDataTests: XCTestCase {
         launcher.runningHandlesToReturn = [FakeClaudeProcess(dataDirectory: folder)]
         manager.load()
 
-        XCTAssertThrowsError(try manager.trashUnlistedData(at: folder))
+        XCTAssertThrowsError(try manager.trashUnlistedData(at: folder)) {
+            XCTAssertEqual($0 as? ProfileManagerError, .dataInUse(name: "work"))
+        }
         XCTAssertTrue(FileManager.default.fileExists(atPath: folder.path))
     }
 

@@ -51,6 +51,9 @@ final class ProfileManager {
     /// Unused folders under `dataRootDirectory`, as of the last change to
     /// the list; see `unlistedData`.
     private var scannedUnlistedData: [UnlistedProfileData] = []
+    /// The last scan left out folders untracked instances run in; scans
+    /// repeat with discovery until they are free.
+    @ObservationIgnored private var unlistedDataHeldByInstances = false
     private var handles: [UUID: ClaudeProcessHandle] = [:]
     /// Pending force-kill timers, one per stopped profile.
     private var forceKillTasks: [UUID: Task<Void, Never>] = [:]
@@ -207,6 +210,7 @@ final class ProfileManager {
                 attach(handle: handle, to: id)
             }
         }
+        if unlistedDataHeldByInstances { rescanUnlistedData() }
     }
 
     /// The listed entry whose storage a discovered instance uses, if any.
@@ -388,10 +392,10 @@ final class ProfileManager {
     /// Undo. Refused while any instance runs in it, listed or not.
     func trashUnlistedData(at directory: URL) throws -> URL {
         try ensureProfileListWritable()
-        let data = try currentUnlistedData(at: directory)
-        guard !instanceRuns(in: data.directory) else {
-            throw ProfileManagerError.dataInUse(name: data.directory.lastPathComponent)
+        guard !instanceRuns(in: directory) else {
+            throw ProfileManagerError.dataInUse(name: directory.lastPathComponent)
         }
+        let data = try currentUnlistedData(at: directory)
         defer { rescanUnlistedData() }
         return try trash.moveToTrash(data.directory)
     }
@@ -402,10 +406,15 @@ final class ProfileManager {
         try FileManager.default.moveItem(at: trashed, to: original)
     }
 
+    /// The listed entry for `directory`. An exact match wins, so on a
+    /// case-sensitive volume `work` never stands in for `WORK`.
     private func currentUnlistedData(at directory: URL) throws -> UnlistedProfileData {
         rescanUnlistedData()
+        let candidates = unlistedData
+        let exactPath = directory.standardizedFileURL.path
         let path = Self.comparablePath(directory)
-        guard let data = unlistedData.first(where: { Self.comparablePath($0.directory) == path }) else {
+        guard let data = candidates.first(where: { $0.directory.standardizedFileURL.path == exactPath })
+                ?? candidates.first(where: { Self.comparablePath($0.directory) == path }) else {
             throw ProfileManagerError.unlistedDataUnavailable
         }
         return data
@@ -433,6 +442,7 @@ final class ProfileManager {
     /// a relaunch is never adopted). Nothing while the list cannot be
     /// opened: which folders it names is unknown. Never creates the root.
     private func rescanUnlistedData() {
+        unlistedDataHeldByInstances = false
         guard unopenedProfileList == nil else {
             scannedUnlistedData = []
             return
@@ -449,9 +459,11 @@ final class ProfileManager {
         // Tracked instances are left to `unlistedData`, so a deleted
         // profile's folder shows up as soon as its instance exits.
         var used = Set(profiles.map { Self.comparablePath($0.dataDirectory) })
+        var heldByInstances: Set<String> = []
         if !entries.isEmpty {
             let tracked = Set(handles.values.compactMap(\.dataDirectory).map(Self.comparablePath))
-            used.formUnion(instanceDataDirectories().subtracting(tracked))
+            heldByInstances = instanceDataDirectories().subtracting(tracked).subtracting(used)
+            used.formUnion(heldByInstances)
         }
         scannedUnlistedData = entries.compactMap { folder -> UnlistedProfileData? in
             guard let values = try? folder.resourceValues(forKeys: Set(keys)),
@@ -461,6 +473,7 @@ final class ProfileManager {
                                        modified: values.contentModificationDate)
         }
         .sorted { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
+        unlistedDataHeldByInstances = entries.contains { heldByInstances.contains(Self.comparablePath($0)) }
     }
 
     /// ChatGPT profiles get a `.codex` folder on first start, Claude ones

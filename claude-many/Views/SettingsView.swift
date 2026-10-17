@@ -83,6 +83,10 @@ struct SettingsView: View {
                 Text("This build cannot run separate profiles. ChatGPT Classic is not supported; install the current \(app.productName) app.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            } else if status == .otherApp {
+                Text("This is not \(app.productName). Choose \(app.bundleName).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -92,6 +96,7 @@ struct SettingsView: View {
         case .available: return "Found"
         case .missing: return "Not found"
         case .unsupported: return "Unsupported"
+        case .otherApp: return "Wrong app"
         }
     }
 }

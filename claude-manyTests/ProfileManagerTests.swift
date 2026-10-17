@@ -526,6 +526,34 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertNotNil(manager.lastError)
     }
 
+    // MARK: Bundle identity
+
+    private func writeClaudeInfo(identifier: String) throws {
+        let info = try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": identifier],
+                                                      format: .xml, options: 0)
+        try info.write(to: tempDir.appendingPathComponent("Claude.app/Contents/Info.plist"))
+    }
+
+    func testClaudeIsRecognizedByItsBundleIdentifier() throws {
+        try makeBundle()
+        try writeClaudeInfo(identifier: "com.anthropic.claudefordesktop")
+        XCTAssertEqual(manager.bundleStatus(for: .claude), .available)
+    }
+
+    func testAnotherAppChosenAsClaudeIsRefusedWithItsOwnError() throws {
+        try makeBundle()
+        try writeClaudeInfo(identifier: "com.apple.Safari")
+        let profile = try manager.addProfile(named: "Work")
+
+        XCTAssertEqual(manager.bundleStatus(for: .claude), .otherApp)
+        XCTAssertThrowsError(try manager.start(id: profile.id)) {
+            XCTAssertEqual($0 as? ProfileManagerError,
+                           .otherApp(app: .claude, path: manager.bundleURL(for: .claude).path))
+            XCTAssertTrue($0.localizedDescription.contains("is not Claude Desktop"))
+        }
+        XCTAssertEqual(launcher.launches.count, 0)
+    }
+
     // MARK: Bundle path persistence
 
     func testBundlePathPersistsAcrossManagerInstances() throws {

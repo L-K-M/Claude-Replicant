@@ -131,7 +131,7 @@ final class ProfileManager {
 
         // Classic at the configured path cannot be started, so never manage
         // its normal instance either.
-        for app in listedApps where bundleStatus(for: app) != .unsupported {
+        for app in listedApps where bundleStatus(for: app).isApp {
             let executable = bundleURL(for: app).appendingPathComponent(app.executablePath)
             for handle in launcher.runningHandles(app: app, executable: executable) {
                 guard handle.isRunning,
@@ -294,6 +294,8 @@ final class ProfileManager {
             throw ProfileManagerError.bundleMissing(app: profile.app, path: bundle.path)
         case .unsupported:
             throw ProfileManagerError.unsupportedBundle(app: profile.app, path: bundle.path)
+        case .otherApp:
+            throw ProfileManagerError.otherApp(app: profile.app, path: bundle.path)
         }
 
         // Create the profile's data directory lazily; the app builds its own
@@ -473,6 +475,7 @@ enum ProfileManagerError: LocalizedError, Equatable {
     case profileNotFound
     case bundleMissing(app: ManagedApp, path: String)
     case unsupportedBundle(app: ManagedApp, path: String)
+    case otherApp(app: ManagedApp, path: String)
     case stopInProgress
     case builtInProfile
 
@@ -486,6 +489,8 @@ enum ProfileManagerError: LocalizedError, Equatable {
             return "\(app.bundleName) was not found at \(path). Install \(app.productName) or fix the path in Settings."
         case .unsupportedBundle(let app, let path):
             return "The app at \(path) cannot run separate \(app.name) profiles. ChatGPT Classic is not supported; install the current \(app.productName) app or fix the path in Settings."
+        case .otherApp(let app, let path):
+            return "The app at \(path) is not \(app.productName). Choose \(app.bundleName) in Settings."
         case .stopInProgress:
             return "This profile's previous instance is still shutting down; try again in a moment."
         case .builtInProfile:

@@ -107,20 +107,30 @@ struct ContentView: View {
         }
     }
 
-    /// Shown while a listed app is missing or is a build that cannot run profiles.
+    /// Shown while a listed app is missing, another app, or a build that cannot run profiles.
     private func bundleBanner(for app: ManagedApp) -> some View {
         let path = MacPlatform.homeRelativePath(of: manager.bundleURL(for: app))
-        let unsupported = manager.bundleStatus(for: app) == .unsupported
+        let title: String
+        let detail: String
+        switch manager.bundleStatus(for: app) {
+        case .unsupported:
+            title = "\(app.bundleName) cannot run profiles"
+            detail = "The app at \(path) is an unsupported build, such as ChatGPT Classic. Install the current \(app.productName) app or locate it."
+        case .otherApp:
+            title = "\(app.bundleName) is a different app"
+            detail = "The app at \(path) is not \(app.productName). \(app.name) profiles cannot start until you locate it."
+        case .missing, .available:
+            title = "\(app.bundleName) was not found"
+            detail = "Expected at \(path). \(app.name) profiles cannot start until you locate it."
+        }
         return HStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .symbolRenderingMode(.multicolor)
                 .font(.title2)
             VStack(alignment: .leading, spacing: 2) {
-                Text(unsupported ? "\(app.bundleName) cannot run profiles" : "\(app.bundleName) was not found")
+                Text(title)
                     .font(.headline)
-                Text(unsupported
-                     ? "The app at \(path) is an unsupported build, such as ChatGPT Classic. Install the current \(app.productName) app or locate it."
-                     : "Expected at \(path). \(app.name) profiles cannot start until you locate it.")
+                Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

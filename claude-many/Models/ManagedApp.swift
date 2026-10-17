@@ -49,15 +49,27 @@ enum ManagedApp: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// ChatGPT Classic (com.openai.chat) uses the same executable name but
-    /// shares one keychain login per Mac user. Only the Electron ChatGPT app
-    /// (com.openai.codex) can relocate its storage.
-    private var requiredBundleIdentifier: String? {
+    /// The build that can relocate its storage. ChatGPT Classic
+    /// (com.openai.chat) uses the same executable name but shares one
+    /// keychain login per Mac user; only the Electron ChatGPT app
+    /// (com.openai.codex) can.
+    private var bundleIdentifier: String {
         switch self {
-        case .claude: return nil
+        case .claude: return "com.anthropic.claudefordesktop"
         case .chatGPT: return "com.openai.codex"
         }
     }
+
+    private var unsupportedBundleIdentifiers: Set<String> {
+        switch self {
+        case .claude: return []
+        case .chatGPT: return ["com.openai.chat"]
+        }
+    }
+
+    /// Whether a bundle without a readable identifier may still be used.
+    /// Claude has no lookalike build; ChatGPT must prove it is not Classic.
+    private var acceptsUnidentifiedBundle: Bool { self == .claude }
 
     /// Default Claude predates ChatGPT support and is always listed. Default
     /// ChatGPT appears with the first ChatGPT profile, so an installed
@@ -81,17 +93,19 @@ enum ManagedApp: String, Codable, CaseIterable, Identifiable, Sendable {
 
     func bundleStatus(at bundle: URL) -> AppBundleStatus {
         guard FileManager.default.fileExists(atPath: bundle.path) else { return .missing }
-        guard let requiredBundleIdentifier else { return .available }
 
         // Read Info.plist directly: Bundle(url:) caches and would miss an app
         // replaced in place, such as Classic upgraded to the current ChatGPT.
         let infoURL = bundle.appendingPathComponent("Contents/Info.plist")
         guard let data = try? Data(contentsOf: infoURL),
               let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              info["CFBundleIdentifier"] as? String == requiredBundleIdentifier else {
-            return .unsupported
+              let identifier = info["CFBundleIdentifier"] as? String else {
+            return acceptsUnidentifiedBundle ? .available : .unsupported
         }
-        return .available
+
+        if identifier == bundleIdentifier { return .available }
+        if unsupportedBundleIdentifiers.contains(identifier) { return .unsupported }
+        return .otherApp
     }
 }
 
@@ -100,4 +114,9 @@ enum AppBundleStatus: Equatable, Sendable {
     case missing
     /// Installed, but a build that cannot isolate profiles (ChatGPT Classic).
     case unsupported
+    /// A different app, e.g. Safari.app picked in Settings.
+    case otherApp
+
+    /// Whether this location runs the app at all, so its instances can be discovered.
+    var isApp: Bool { self == .available || self == .missing }
 }

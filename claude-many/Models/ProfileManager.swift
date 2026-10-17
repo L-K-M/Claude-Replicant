@@ -55,8 +55,10 @@ final class ProfileManager {
     /// repeat with discovery until they are free.
     @ObservationIgnored private var unlistedDataHeldByInstances = false
     /// Folders the list on disk names, as comparable paths. Never offered as
-    /// unlisted, even when a failed save left `profiles` without them.
-    @ObservationIgnored private var savedDataDirectories: Set<String> = []
+    /// unlisted, even when a failed save left `profiles` without them. Nil
+    /// while the file names folders that could not be decoded: then no
+    /// folder is offered until a save succeeds.
+    @ObservationIgnored private var savedDataDirectories: Set<String>? = []
     private var handles: [UUID: ClaudeProcessHandle] = [:]
     /// Pending force-kill timers, one per stopped profile.
     private var forceKillTasks: [UUID: Task<Void, Never>] = [:]
@@ -170,6 +172,9 @@ final class ProfileManager {
         do {
             try persist()
         } catch {
+            // The old file stays, naming folders of entries that could not
+            // be decoded. (Needs the save, not the copy, to fail: untested.)
+            savedDataDirectories = nil
             lastError = [lastError, "Saving the readable profiles failed: \(error.localizedDescription)"]
                 .compactMap { $0 }
                 .joined(separator: " ")
@@ -473,6 +478,10 @@ final class ProfileManager {
 
         // Tracked instances are left to `unlistedData`, so a deleted
         // profile's folder shows up as soon as its instance exits.
+        guard let savedDataDirectories else {
+            scannedUnlistedData = []
+            return
+        }
         var used = Self.comparablePaths(of: profiles).union(savedDataDirectories)
         var heldByInstances: Set<String> = []
         if !entries.isEmpty {
@@ -487,7 +496,13 @@ final class ProfileManager {
             return UnlistedProfileData(directory: folder, app: Self.app(usingDataIn: folder),
                                        modified: values.contentModificationDate)
         }
-        .sorted { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
+        .sorted { first, second in
+            // Newest first; the name keeps equal dates from trading places.
+            let firstModified = first.modified ?? .distantPast
+            let secondModified = second.modified ?? .distantPast
+            guard firstModified == secondModified else { return firstModified > secondModified }
+            return first.directory.lastPathComponent < second.directory.lastPathComponent
+        }
         unlistedDataHeldByInstances = entries.contains { heldByInstances.contains(Self.comparablePath($0)) }
     }
 

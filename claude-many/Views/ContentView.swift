@@ -38,6 +38,7 @@ struct ContentView: View {
             }
             .listStyle(.inset(alternatesRowBackgrounds: true))
             .contextMenu(forSelectionType: UUID.self, menu: contextMenuContent, primaryAction: openProfiles)
+            .onKeyPress(.return, action: renameOnReturn)
         }
         .frame(minWidth: 460, minHeight: 260)
         .toolbar {
@@ -324,6 +325,15 @@ struct ContentView: View {
         DispatchQueue.main.async {
             NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
         }
+    }
+
+    /// Return renames the selected profile, like Finder. Handled by the
+    /// list rather than the menu so it never fires in other windows.
+    private func renameOnReturn() -> KeyPress.Result {
+        let targets = selectedProfiles
+        guard editingID == nil, targets.count == 1, !targets[0].isDefault else { return .ignored }
+        beginRename(targets[0].id)
+        return .handled
     }
 
     private func commitEditing() {

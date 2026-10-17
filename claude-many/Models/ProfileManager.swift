@@ -16,6 +16,17 @@ final class ProfileManager {
     /// Entries to start as soon as their stopping instance exits.
     private var startsAfterExit: Set<UUID> = []
     private(set) var lastError: String?
+    /// Each app's installed version, read with every scan.
+    private(set) var installedVersions: [ManagedApp: String] = [:]
+    /// The version each tracked instance runs, as far as known: the
+    /// installed version when it was started or first seen.
+    private var instanceVersions: [UUID: String] = [:]
+    /// The version whose restart notice the user postponed, per app.
+    private var postponedRestartVersions: [ManagedApp: String] = [:]
+    /// Isolated entries that quit on their own, with the version they ran,
+    /// until an update shows up or `updateRelaunchWindow` passes.
+    @ObservationIgnored private var recentExits: [UUID: (version: String, date: Date)] = [:]
+    private var closedForUpdateIDs: [UUID] = []
     private var bundleURLs: [ManagedApp: URL]
 
     /// Claude is always listed; ChatGPT once it has a profile.
@@ -51,6 +62,9 @@ final class ProfileManager {
     /// Pending force-kill timers, one per stopped profile.
     private var forceKillTasks: [UUID: Task<Void, Never>] = [:]
     private static let reconciliationInterval: Duration = .seconds(2)
+    /// How long after an instance quits an update can still explain it:
+    /// the updater replaces the bundle once the app has quit.
+    private static let updateRelaunchWindow: TimeInterval = 120
     private var monitorOwner: UUID?
 
     // MARK: Well-known paths
@@ -132,6 +146,7 @@ final class ProfileManager {
             handleTermination(of: id, handle: handle)
         }
         releaseUnlistedBuiltIns()
+        refreshInstalledVersions()
 
         // Classic at the configured path cannot be started, so never manage
         // its normal instance either.
@@ -334,6 +349,10 @@ final class ProfileManager {
     private func attach(handle: ClaudeProcessHandle, to id: UUID) {
         handles[id] = handle
         runningProfileIDs.insert(id)
+        if let app = listedProfiles.first(where: { $0.id == id })?.app {
+            instanceVersions[id] = installedVersions[app]
+        }
+        closedForUpdateIDs.removeAll { $0 == id }
 
         handle.terminationHandler = { [weak self, weak handle] in
             // Process calls the handler on an arbitrary queue; hop to the
@@ -440,6 +459,13 @@ final class ProfileManager {
         // a stale handle from an earlier stop could otherwise wipe out the
         // bookkeeping of a freshly restarted instance.
         guard handles[id] === handle else { return }
+        // Quit on its own, perhaps to install an update; see `profilesClosedForUpdate`.
+        if !stoppingProfileIDs.contains(id),
+           profiles.contains(where: { $0.id == id }),
+           let version = instanceVersions[id] {
+            recentExits[id] = (version, Date())
+        }
+        instanceVersions[id] = nil
         handles[id] = nil
         runningProfileIDs.remove(id)
         stoppingProfileIDs.remove(id)
@@ -452,6 +478,59 @@ final class ProfileManager {
             try start(id: id)
         } catch {
             report(error)
+        }
+    }
+
+    // MARK: App updates
+
+    func installedVersion(of app: ManagedApp) -> String? {
+        installedVersions[app]
+    }
+
+    /// Running entries of `app` started before its installed version: they
+    /// run the old one until restarted. Empty after `postponeRestart(for:)`
+    /// until another version is installed.
+    func instancesNeedingRestart(for app: ManagedApp) -> [ClaudeProfile] {
+        guard let installed = installedVersions[app],
+              postponedRestartVersions[app] != installed else { return [] }
+        return listedProfiles.filter { profile in
+            guard profile.app == app, isRunning(id: profile.id),
+                  let running = instanceVersions[profile.id] else { return false }
+            return running != installed
+        }
+    }
+
+    func postponeRestart(for app: ManagedApp) {
+        postponedRestartVersions[app] = installedVersions[app]
+    }
+
+    /// Isolated entries that quit on their own while their app was updated.
+    /// Claude's updater relaunches the app without the profile's folder, so
+    /// a window that reopened by itself belongs to the Default entry.
+    var profilesClosedForUpdate: [ClaudeProfile] {
+        closedForUpdateIDs.compactMap { id in profiles.first { $0.id == id } }
+    }
+
+    func dismissClosedForUpdate(id: UUID) {
+        closedForUpdateIDs.removeAll { $0 == id }
+    }
+
+    private func refreshInstalledVersions() {
+        for app in ManagedApp.allCases {
+            let version = app.bundleVersion(at: bundleURL(for: app))
+            if installedVersions[app] != version { installedVersions[app] = version }
+        }
+
+        let now = Date()
+        for (id, exit) in recentExits {
+            guard now.timeIntervalSince(exit.date) < Self.updateRelaunchWindow,
+                  let app = profiles.first(where: { $0.id == id })?.app else {
+                recentExits[id] = nil
+                continue
+            }
+            guard let installed = installedVersions[app], installed != exit.version else { continue }
+            recentExits[id] = nil
+            if !isRunning(id: id), !closedForUpdateIDs.contains(id) { closedForUpdateIDs.append(id) }
         }
     }
 

@@ -19,6 +19,7 @@ struct ContentView: View {
                 bundleBanner(for: app)
                 Divider()
             }
+            UpdateBanners(manager: manager)
 
             List(selection: $selection) {
                 // Built-in Default entries sit outside the reorderable

@@ -79,6 +79,18 @@ struct SettingsView: View {
                 .labelStyle(.titleAndIcon)
                 .font(.callout)
             }
+            if let version = manager.installedVersion(of: app) {
+                LabeledContent("Version") {
+                    Text(version)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                if app.isNewerThanChecked(version) {
+                    Text("\(AppBranding.name) was checked with \(app.name) \(app.checkedVersion). If profiles stop staying separate after this update, see the README.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             if status == .unsupported {
                 Text("This build cannot run separate profiles. ChatGPT Classic is not supported; install the current \(app.productName) app.")
                     .font(.caption)

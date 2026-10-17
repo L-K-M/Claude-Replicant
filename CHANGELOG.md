@@ -11,6 +11,10 @@
 - Stopped profiles show "Stopping…" until their instance has quit, instead
   of a Start button that fails. Restart (⌘R) quits and reopens a profile;
   Open or Start All during shutdown start it again once it has quit.
+- After an app update, a banner offers to restart profiles still running
+  the old version, and warns when a profile quit for the update (the
+  updater reopens it as the Default entry). Settings shows each app's
+  version and flags versions newer than the ones last checked.
 
 ## 1.0.0
 

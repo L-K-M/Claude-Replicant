@@ -48,8 +48,9 @@ final class ProfileManager {
     private let launcher: any ClaudeLauncher
     private let defaults: UserDefaults
     private var handles: [UUID: ClaudeProcessHandle] = [:]
-    /// Pending force-kill timers, one per stopped profile.
-    private var forceKillTasks: [UUID: Task<Void, Never>] = [:]
+    /// Escalates each stop until its process exits; see `StopTimeline`.
+    private var stopSupervisors: [UUID: Task<Void, Never>] = [:]
+    private let stopTimeline: StopTimeline
     private static let reconciliationInterval: Duration = .seconds(2)
     private var monitorOwner: UUID?
 
@@ -87,13 +88,15 @@ final class ProfileManager {
         claudeBundleURL: URL? = nil,
         chatGPTBundleURL: URL? = nil,
         defaults: UserDefaults? = nil,
-        dataRootDirectory: URL = ProfileManager.profilesRootDirectory
+        dataRootDirectory: URL = ProfileManager.profilesRootDirectory,
+        stopTimeline: StopTimeline = .standard
     ) {
         self.store = store
             ?? ProfileStore(fileURL: Self.appSupportDirectory.appendingPathComponent("profiles.json"))
         self.launcher = launcher
         self.defaults = defaults ?? .standard
         self.dataRootDirectory = dataRootDirectory
+        self.stopTimeline = stopTimeline
 
         var bundleURLs: [ManagedApp: URL] = [:]
         for app in ManagedApp.allCases {
@@ -162,7 +165,7 @@ final class ProfileManager {
         let listed = Set(listedProfiles.map(\.id))
         for (id, handle) in handles where ClaudeProfile.isBuiltIn(id: id) && !listed.contains(id) {
             // A pending Stop keeps its handle until the process exits.
-            guard forceKillTasks[id] == nil else { continue }
+            guard stopSupervisors[id] == nil else { continue }
             handle.terminationHandler = nil
             handles[id] = nil
             runningProfileIDs.remove(id)
@@ -391,23 +394,72 @@ final class ProfileManager {
         }
     }
 
-    /// Asks the instance to quit cleanly (SIGTERM), then force-kills it if it
-    /// has not exited within a few seconds. The entry is `.stopping` until
-    /// the process exits; that also cancels a start queued behind it.
+    /// Asks the instance to quit the way ⌘Q does, so it can save its state,
+    /// and escalates only while it keeps running (see `StopTimeline`). The
+    /// entry is `.stopping` until the process exits; that also cancels a
+    /// start queued behind it.
     func stop(id: UUID) {
         if startsAfterExit.contains(id) { startsAfterExit.remove(id) }
         guard isRunning(id: id), let handle = handles[id] else { return }
         runningProfileIDs.remove(id)
         stoppingProfileIDs.insert(id)
-        forceKillTasks[id]?.cancel()
         handle.terminate()
+        superviseStop(of: id, handle: handle, after: .quitRequested)
+    }
 
-        let task = Task { [weak handle] in
-            try? await Task.sleep(for: .seconds(5))
-            guard let handle, handle.isRunning else { return }
-            handle.terminateForcefully()
+    /// Kills an instance that is taking too long to quit; it may lose
+    /// unsaved state. Only while stopping: a running instance is asked to
+    /// quit first.
+    func forceQuit(id: UUID) {
+        guard stoppingProfileIDs.contains(id), let handle = handles[id] else { return }
+        handle.terminateForcefully()
+        superviseStop(of: id, handle: handle, after: .killed)
+    }
+
+    /// Takes the next escalation step each time a delay passes with the
+    /// process still running. Cancelled when the process exits.
+    private func superviseStop(of id: UUID, handle: ClaudeProcessHandle, after step: StopTimeline.Step) {
+        stopSupervisors[id]?.cancel()
+        let timeline = stopTimeline
+        stopSupervisors[id] = Task { [weak self] in
+            var step = step
+            while true {
+                try? await Task.sleep(for: timeline.delay(after: step))
+                guard !Task.isCancelled, let self, self.handles[id] === handle else { return }
+                // An exit the termination callback has not reported yet.
+                guard handle.isRunning else {
+                    self.handleTermination(of: id, handle: handle)
+                    return
+                }
+
+                switch step {
+                case .quitRequested:
+                    handle.sendTerminationSignal()
+                    step = .terminated
+                case .terminated:
+                    handle.terminateForcefully()
+                    step = .killed
+                case .killed:
+                    self.abandon(id: id, handle: handle)
+                    return
+                }
+            }
         }
-        forceKillTasks[id] = task
+    }
+
+    /// Not even SIGKILL ended the process (it is stuck in the kernel). Stop
+    /// tracking it so the entry does not stay "Stopping…" forever, drop a
+    /// start queued behind it (the process may still hold the data folder),
+    /// and name the process to look for.
+    private func abandon(id: UUID, handle: ClaudeProcessHandle) {
+        guard handles[id] === handle else { return }
+        handle.terminationHandler = nil
+        handles[id] = nil
+        stoppingProfileIDs.remove(id)
+        startsAfterExit.remove(id)
+        stopSupervisors[id] = nil
+        let label = listedProfiles.first { $0.id == id }?.label
+        report(ProfileManagerError.didNotQuit(label: label, processIdentifier: handle.processIdentifier))
     }
 
     /// Also cancels starts queued behind instances that are still quitting.
@@ -443,8 +495,8 @@ final class ProfileManager {
         handles[id] = nil
         runningProfileIDs.remove(id)
         stoppingProfileIDs.remove(id)
-        forceKillTasks[id]?.cancel()
-        forceKillTasks[id] = nil
+        stopSupervisors[id]?.cancel()
+        stopSupervisors[id] = nil
 
         guard startsAfterExit.remove(id) != nil,
               listedProfiles.contains(where: { $0.id == id }) else { return }
@@ -533,6 +585,7 @@ enum ProfileManagerError: LocalizedError, Equatable {
     case unsupportedBundle(app: ManagedApp, path: String)
     case stopInProgress
     case builtInProfile
+    case didNotQuit(label: String?, processIdentifier: Int32)
 
     var errorDescription: String? {
         switch self {
@@ -548,6 +601,9 @@ enum ProfileManagerError: LocalizedError, Equatable {
             return "This profile's previous instance is still shutting down; try again in a moment."
         case .builtInProfile:
             return "Default entries are built in and cannot be renamed or removed."
+        case .didNotQuit(let label, let processIdentifier):
+            let instance = label.map { "“\($0)”" } ?? "An instance"
+            return "\(instance) (process \(processIdentifier)) did not quit, even when forced. Check it in Activity Monitor before starting it again."
         }
     }
 }

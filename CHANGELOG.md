@@ -11,6 +11,11 @@
 - Stopped profiles show "Stopping…" until their instance has quit, instead
   of a Start button that fails. Restart (⌘R) quits and reopens a profile;
   Open or Start All during shutdown start it again once it has quit.
+- Stop asks the app to quit like ⌘Q and waits 30 seconds before killing
+  it (was SIGTERM, then SIGKILL after 5 seconds), so it can save its
+  state. Force Quit ends a stopping instance at once. An instance that
+  not even SIGKILL ends is reported instead of showing "Stopping…"
+  forever.
 
 ## 1.0.0
 

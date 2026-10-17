@@ -305,6 +305,11 @@ struct ContentView: View {
 
     private func commitEditing() {
         guard let id = editingID else { return }
+        // An emptied name keeps the old one, like Finder, instead of an error alert.
+        guard ClaudeProfile.normalizedLabel(editingDraft) != nil else {
+            cancelEditing()
+            return
+        }
         editingID = nil
         nameFieldFocused = false
         performProfileEdit("Rename Profile") {

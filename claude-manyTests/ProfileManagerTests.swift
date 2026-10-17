@@ -181,6 +181,12 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(manager.profiles.first?.dataDirectory, profile.dataDirectory, "renaming must not move the data dir")
     }
 
+    func testNamesAreTrimmedAndBlankNamesAreNoNames() {
+        XCTAssertEqual(ClaudeProfile.normalizedLabel("  Work \n"), "Work")
+        XCTAssertNil(ClaudeProfile.normalizedLabel(""))
+        XCTAssertNil(ClaudeProfile.normalizedLabel(" \t\n "), "the rename field reverts on this instead of failing")
+    }
+
     func testRenameProfileRejectsEmptyName() throws {
         let profile = try manager.addProfile(named: "Before")
         XCTAssertThrowsError(try manager.renameProfile(id: profile.id, to: " ")) { error in

@@ -8,6 +8,8 @@
 - File → New ChatGPT Profile (⌥⌘N); the toolbar **+** offers both apps.
   Untitled Claude profiles are now named "New Claude Profile".
 - Settings lists separate locations for Claude.app and ChatGPT.app.
+- Clearing a profile's name while renaming keeps the old name instead of
+  showing an error, as in Finder.
 
 ## 1.0.0
 

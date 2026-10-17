@@ -296,15 +296,7 @@ final class ProfileManager {
             throw ProfileManagerError.stopInProgress
         }
 
-        let bundle = bundleURL(for: profile.app)
-        switch profile.app.bundleStatus(at: bundle) {
-        case .available:
-            break
-        case .missing:
-            throw ProfileManagerError.bundleMissing(app: profile.app, path: bundle.path)
-        case .unsupported:
-            throw ProfileManagerError.unsupportedBundle(app: profile.app, path: bundle.path)
-        }
+        let bundle = try launchableBundle(for: profile.app)
 
         // Create the profile's data directory lazily; the app builds its own
         // layout (Local Storage, cookies, config, sessions) on first run.
@@ -319,6 +311,19 @@ final class ProfileManager {
         )
         attach(handle: handle, to: id)
         lastError = nil
+    }
+
+    /// The app's bundle, or the reason it cannot start an instance now.
+    private func launchableBundle(for app: ManagedApp) throws -> URL {
+        let bundle = bundleURL(for: app)
+        switch app.bundleStatus(at: bundle) {
+        case .available:
+            return bundle
+        case .missing:
+            throw ProfileManagerError.bundleMissing(app: app, path: bundle.path)
+        case .unsupported:
+            throw ProfileManagerError.unsupportedBundle(app: app, path: bundle.path)
+        }
     }
 
     /// Registers a live handle as the running instance for a profile and
@@ -365,9 +370,18 @@ final class ProfileManager {
 
     /// Quits the instance and starts it again once the old process has
     /// exited, e.g. to pick up an app update. A stopped entry just starts.
+    /// An instance whose app can no longer start (moved, replaced by an
+    /// unsupported build) keeps running.
     func restart(id: UUID) {
         switch state(of: id) {
         case .running:
+            guard let app = listedProfiles.first(where: { $0.id == id })?.app else { return }
+            do {
+                _ = try launchableBundle(for: app)
+            } catch {
+                report(error)
+                return
+            }
             stop(id: id)
             startsAfterExit.insert(id)
         case .stopping, .restarting:

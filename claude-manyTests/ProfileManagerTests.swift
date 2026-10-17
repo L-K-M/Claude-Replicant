@@ -360,6 +360,22 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertNil(manager.lastError)
     }
 
+    func testRestartKeepsTheInstanceRunningWhenTheAppCannotStartAgain() throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        let first = try XCTUnwrap(launcher.launchedHandles.first)
+        try FileManager.default.removeItem(at: tempDir.appendingPathComponent("Claude.app"))
+
+        manager.restart(id: profile.id)
+        XCTAssertFalse(first.terminationRequested, "a restart that cannot start again must not quit")
+        XCTAssertEqual(manager.state(of: profile.id), .running)
+        XCTAssertEqual(manager.lastError,
+                       ProfileManagerError.bundleMissing(
+                           app: .claude, path: tempDir.appendingPathComponent("Claude.app").path
+                       ).errorDescription)
+    }
+
     func testRestartOfAStoppedProfileStartsIt() throws {
         try makeBundle()
         let profile = try manager.addProfile(named: "Work")

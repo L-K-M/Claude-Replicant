@@ -145,11 +145,12 @@ struct ContentView: View {
         let runningTargets = targets.filter { manager.isRunning(id: $0.id) }
         // Stop also cancels a start queued behind a quitting instance.
         let stoppableTargets = targets.filter { [.running, .restarting].contains(manager.state(of: $0.id)) }
+        let restartableTargets = runningTargets.filter(canRestart)
         var context = ProfileCommandContext()
         context.selectionCount = targets.count
         context.canOpen = !targets.isEmpty
         context.canStop = !stoppableTargets.isEmpty
-        context.canRestart = !runningTargets.isEmpty
+        context.canRestart = !restartableTargets.isEmpty
         context.canRename = editingID == nil && targets.count == 1 && !targets[0].isDefault
         context.canReveal = !targets.isEmpty
         context.canCopyPath = targets.count == 1
@@ -161,7 +162,7 @@ struct ContentView: View {
         context.canStopAll = manager.listedProfiles.contains { [.running, .restarting].contains(manager.state(of: $0.id)) }
         context.openTitle = targets.count == 1 ? "Open “\(targets[0].label)”" : "Open \(targets.count) Profiles"
         context.stopTitle = stoppableTargets.count == 1 ? "Stop “\(stoppableTargets[0].label)”" : "Stop \(stoppableTargets.count) Profiles"
-        context.restartTitle = runningTargets.count == 1 ? "Restart “\(runningTargets[0].label)”" : "Restart \(runningTargets.count) Profiles"
+        context.restartTitle = restartableTargets.count == 1 ? "Restart “\(restartableTargets[0].label)”" : "Restart \(restartableTargets.count) Profiles"
         context.deleteTitle = deleteTitle(for: deletables)
         context.newProfile = newProfile
         context.openSelected = { openProfiles(selection) }
@@ -224,7 +225,7 @@ struct ContentView: View {
             if targets.contains(where: { [.running, .restarting].contains(manager.state(of: $0.id)) }) {
                 Button("Stop") { stopProfiles(ids) }
             }
-            if targets.contains(where: { manager.isRunning(id: $0.id) }) {
+            if targets.contains(where: canRestart) {
                 Button("Restart") { restartProfiles(ids) }
             }
             Divider()
@@ -278,9 +279,14 @@ struct ContentView: View {
 
     /// Restarts only running entries; stopped ones stay stopped.
     private func restartProfiles(_ ids: Set<UUID>) {
-        for profile in manager.listedProfiles where ids.contains(profile.id) && manager.isRunning(id: profile.id) {
+        for profile in manager.listedProfiles where ids.contains(profile.id) && canRestart(profile) {
             manager.restart(id: profile.id)
         }
+    }
+
+    /// Restart quits first, so offer it only while the app can start again.
+    private func canRestart(_ profile: ClaudeProfile) -> Bool {
+        manager.isRunning(id: profile.id) && manager.bundleStatus(for: profile.app) == .available
     }
 
     private func reveal(_ ids: Set<UUID>) {

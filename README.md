@@ -151,9 +151,10 @@ double-click to open a profile, press **Return** to rename it inline, **⌘⌫**
 to delete, and drag to reorder profiles below the pinned Default entry.
 Right-click a row (or use the **Profiles** menu) for Open, Stop, Restart
 (**⌘R**), Rename, Delete, Reveal in Finder, and Copy Data Folder Path. A
-stopped profile shows "Stopping…" until its instance has quit; Open or Start
-All during that time start it again once it has, and Stop cancels that. Add, rename, delete,
-and reorder are all undoable via **⌘Z**. The window title bar shows how many
+profile that is shutting down shows "Stopping…" until its instance has quit;
+Open or Start All during that time start it again once it has, and Stop
+cancels that. Restart is offered only while the app can start again. Add,
+rename, delete, and reorder are all undoable via **⌘Z**. The window title bar shows how many
 instances are running, and quitting the window quits the app; running Claude
 instances keep running and are adopted on the next launch.
 

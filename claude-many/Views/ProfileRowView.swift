@@ -80,6 +80,7 @@ struct ProfileRowView: View {
             Menu {
                 if state == .running {
                     Button("Restart") { manager.restart(id: profile.id) }
+                        .disabled(manager.bundleStatus(for: profile.app) != .available)
                 } else if state == .restarting {
                     Button("Cancel Restart") { manager.stop(id: profile.id) }
                 }

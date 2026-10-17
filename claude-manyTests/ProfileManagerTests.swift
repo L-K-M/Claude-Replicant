@@ -176,9 +176,45 @@ final class ProfileManagerTests: XCTestCase {
 
     func testRenameProfile() throws {
         let profile = try manager.addProfile(named: "Before")
+        try FileManager.default.createDirectory(at: profile.dataDirectory, withIntermediateDirectories: true)
         try manager.renameProfile(id: profile.id, to: "After")
         XCTAssertEqual(manager.profiles.first?.label, "After")
         XCTAssertEqual(manager.profiles.first?.dataDirectory, profile.dataDirectory, "renaming must not move the data dir")
+    }
+
+    func testRenameBeforeFirstStartNamesTheDataFolderAfterTheProfile() throws {
+        try FileManager.default.createDirectory(at: manager.dataRootDirectory.appendingPathComponent("work"),
+                                                withIntermediateDirectories: true)
+        let profile = try manager.addUntitledProfile(for: .claude)
+
+        try manager.renameProfile(id: profile.id, to: "Work")
+
+        let renamed = try XCTUnwrap(manager.profiles.first)
+        XCTAssertEqual(renamed.id, profile.id)
+        XCTAssertEqual(renamed.dataDirectory.lastPathComponent, "work-2", "an existing folder is never reused")
+        XCTAssertEqual(try manager.store.load(), [renamed])
+    }
+
+    func testRenameToTheSameSlugKeepsTheDataFolder() throws {
+        let profile = try manager.addProfile(named: "Work")
+        try manager.renameProfile(id: profile.id, to: "work")
+        XCTAssertEqual(manager.profiles.first?.dataDirectory, profile.dataDirectory)
+    }
+
+    func testUndoingARenameKeepsTheFolderAStartedProfileUses() throws {
+        try makeBundle()
+        let profile = try manager.addUntitledProfile(for: .claude)
+        let beforeRename = manager.profiles
+        try manager.renameProfile(id: profile.id, to: "Work")
+        try manager.start(id: profile.id)
+        let folderInUse = try XCTUnwrap(manager.profiles.first).dataDirectory
+
+        manager.restoreProfiles(beforeRename)
+
+        XCTAssertEqual(manager.profiles.first?.label, profile.label)
+        XCTAssertEqual(manager.profiles.first?.dataDirectory, folderInUse,
+                       "undo must not point a started profile at a folder it never used")
+        XCTAssertTrue(manager.isRunning(id: profile.id))
     }
 
     func testRenameProfileRejectsEmptyName() throws {

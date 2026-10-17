@@ -33,6 +33,12 @@ struct ClaudeProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
         location.dataDirectory ?? app.standardDataDirectory
     }
 
+    /// An `export …` line that points `claude` or `codex` in a terminal at
+    /// this profile's CLI settings and login; nil for the default entries.
+    var terminalExports: String? {
+        ClaudeLaunchConfiguration(app: app, location: location).shellExports
+    }
+
     init(id: UUID = UUID(), label: String, app: ManagedApp = .claude, dataDirectory: URL) {
         self.id = id
         self.label = label

@@ -50,6 +50,29 @@ final class ClaudeLaunchConfigurationTests: XCTestCase {
                           personal.environment(inheriting: inherited)["CLAUDE_CONFIG_DIR"])
     }
 
+    func testTerminalExportsMatchWhatTheAppGivesItsCLI() {
+        let claude = ClaudeProfile(label: "Work", dataDirectory: URL(fileURLWithPath: "/Profiles/Work Account", isDirectory: true))
+        XCTAssertEqual(claude.terminalExports,
+                       "export CLAUDE_CONFIG_DIR='/Profiles/Work Account/.claude' "
+                       + "CLAUDE_SECURESTORAGE_CONFIG_DIR='/Profiles/Work Account/.claude'")
+        let launched = ClaudeLaunchConfiguration(app: .claude, location: claude.location).environment(inheriting: [:])
+        XCTAssertEqual(launched["CLAUDE_CONFIG_DIR"], "/Profiles/Work Account/.claude")
+
+        // The Codex CLI reads CODEX_HOME; the Electron storage variable is app-only.
+        let chatGPT = ClaudeProfile(label: "Research", app: .chatGPT,
+                                    dataDirectory: URL(fileURLWithPath: "/Profiles/research", isDirectory: true))
+        XCTAssertEqual(chatGPT.terminalExports, "export CODEX_HOME='/Profiles/research/.codex'")
+
+        XCTAssertNil(ClaudeProfile.builtIn(for: .claude).terminalExports, "the default entry uses the normal CLI setup")
+    }
+
+    func testTerminalExportsQuoteEveryPath() {
+        let profile = ClaudeProfile(label: "Quotes", dataDirectory: URL(fileURLWithPath: "/Profiles/it's $HOME `x`", isDirectory: true))
+        XCTAssertEqual(profile.terminalExports,
+                       #"export CLAUDE_CONFIG_DIR='/Profiles/it'\''s $HOME `x`/.claude' "#
+                       + #"CLAUDE_SECURESTORAGE_CONFIG_DIR='/Profiles/it'\''s $HOME `x`/.claude'"#)
+    }
+
     func testDataDirectoryPreservesSpaces() {
         let path = "/Profiles/Work Account/Ötzi"
         XCTAssertEqual(ClaudeLaunchConfiguration.dataDirectory(in: ["--user-data-dir=\(path)"])?.path, path)

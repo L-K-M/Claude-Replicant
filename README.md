@@ -155,6 +155,12 @@ and reorder are all undoable via **⌘Z**. The window title bar shows how many
 instances are running, and quitting the window quits the app; running Claude
 instances keep running and are adopted on the next launch.
 
+To use a profile's account from the command line, right-click it and choose
+**Copy Terminal Environment**, paste the copied `export …` line into Terminal,
+then run `claude` (or `codex` for a ChatGPT profile). The CLI then reads the
+same `.claude/` (or `.codex/`) settings, history, and credential namespace the
+app gives its own Code sessions. The setting lasts for that Terminal session.
+
 Deleting a profile only removes it from the list — the data directory stays
 on disk so nothing is lost (remove it manually if you truly want to delete
 the account data). Settings (**⌘,**) shows the Claude.app and ChatGPT.app

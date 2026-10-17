@@ -78,6 +78,12 @@ struct ProfileRowView: View {
                 Button("Copy Data Folder Path") {
                     MacPlatform.copyPathToPasteboard(profile.dataDirectory)
                 }
+                if let exports = profile.terminalExports {
+                    Button("Copy Terminal Environment") {
+                        MacPlatform.copyToPasteboard(exports)
+                    }
+                    .help(Self.terminalEnvironmentHelp(for: profile.app))
+                }
                 if !profile.isDefault {
                     Divider()
                     Button("Delete…", role: .destructive, action: requestDelete)
@@ -91,6 +97,11 @@ struct ProfileRowView: View {
             .help("More actions")
         }
         .padding(.vertical, 4)
+    }
+
+    static func terminalEnvironmentHelp(for app: ManagedApp) -> String {
+        let command = app == .claude ? "claude" : "codex"
+        return "Paste into Terminal, then run \(command) to use this profile's settings and login"
     }
 
     private var subtitle: String {

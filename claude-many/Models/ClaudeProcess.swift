@@ -61,13 +61,15 @@ struct RealClaudeLauncher: ClaudeLauncher {
     /// Ambiguous launches are excluded; see `ClaudeLaunchConfiguration.location(of:app:)`.
     func runningHandles(app: ManagedApp, executable: URL) -> [ClaudeProcessHandle] {
         let target = executable.resolvingSymlinksInPath().path
-        let commandName = Self.commandName(forExecutable: target)
+        // The name the process was exec'd by: the bundle path or its resolved target.
+        let commandNames = Set([target, executable.path].map(Self.commandName(forExecutable:)))
         var result: [ClaudeProcessHandle] = []
         for (pid, startTime, command) in Self.allProcesses() {
             // Runs every 2 s on the main actor: the kernel's command name rules
             // out nearly every process without a syscall, and only the few
-            // candidates get their path, argv, and environment read.
-            guard command == commandName else { continue }
+            // candidates get their path, argv, and environment read. APFS is
+            // usually case-insensitive, so `claude` may run `Claude`.
+            guard commandNames.contains(where: { $0.caseInsensitiveCompare(command) == .orderedSame }) else { continue }
             if let path = Self.executablePath(for: pid), !Self.executableMatches(path, target: target) {
                 continue
             }

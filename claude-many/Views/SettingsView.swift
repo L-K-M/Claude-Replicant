@@ -38,6 +38,8 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 480)
         .padding()
+        // Keeps the bundle checks current if the main window closes first.
+        .task { await manager.monitorRunningProcesses() }
     }
 
     private func applicationSection(for app: ManagedApp) -> some View {

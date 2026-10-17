@@ -137,7 +137,9 @@ final class ProfileManager {
         do {
             try persist()
         } catch {
-            report(error)
+            lastError = [lastError, "Saving the readable profiles failed: \(error.localizedDescription)"]
+                .compactMap { $0 }
+                .joined(separator: " ")
         }
     }
 
@@ -147,7 +149,7 @@ final class ProfileManager {
     private func setAsideUnreadableList(problem: String) -> URL? {
         do {
             let copy = try store.setAsideUnreadableFile()
-            lastError = "\(problem) The original was kept as “\(copy.lastPathComponent)” next to profiles.json. Profile data folders were not changed."
+            lastError = "\(problem) The original was kept at \(copy.path). Profile data folders were not changed."
             return copy
         } catch {
             lastError = "\(problem) It could not be set aside (\(error.localizedDescription)), so the next change will replace it."

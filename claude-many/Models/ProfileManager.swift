@@ -485,6 +485,11 @@ final class ProfileManager {
         var result = ""
         var pendingDash = false
         for scalar in label.lowercased().unicodeScalars {
+            // A mark that opens a word has no letter of its own and would
+            // fuse with the dash before it ("-\u{301}" is one character).
+            if Self.isCombiningMark(scalar) && (pendingDash || result.isEmpty) {
+                continue
+            }
             if CharacterSet.alphanumerics.contains(scalar) {
                 if pendingDash && !result.isEmpty {
                     result.append("-")
@@ -498,6 +503,13 @@ final class ProfileManager {
         // After the cut: one character can be longer than the whole limit.
         let slug = truncated(result, toUTF8Length: maximumSlugLength)
         return slug.isEmpty ? "profile" : slug
+    }
+
+    private static func isCombiningMark(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .nonspacingMark, .spacingMark, .enclosingMark: return true
+        default: return false
+        }
     }
 
     /// Cuts whole characters, then any dash left dangling at the end.

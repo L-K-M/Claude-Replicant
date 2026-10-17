@@ -140,6 +140,10 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(ProfileManager.slug(for: "Ötzi's äccount"), "ötzi-s-äccount")
         XCTAssertEqual(ProfileManager.slug(for: "   "), "profile")
         XCTAssertEqual(ProfileManager.slug(for: "Claude"), "claude")
+        // A combining mark with no letter before it would fuse with a dash.
+        XCTAssertEqual(ProfileManager.slug(for: "Work \u{301}"), "work")
+        XCTAssertEqual(ProfileManager.slug(for: "\u{301}Work"), "work")
+        XCTAssertEqual(ProfileManager.slug(for: "a -\u{301}b"), "a-b")
     }
 
     func testVeryLongNamesStillGetAFolderTheFileSystemAccepts() throws {
@@ -172,6 +176,21 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(repaired.dataDirectory.lastPathComponent.utf8.count, ProfileManager.maximumSlugLength)
         XCTAssertEqual(try reloaded.store.load(), [repaired], "the repair is saved")
         XCTAssertNoThrow(try reloaded.start(id: saved.id))
+    }
+
+    func testARepairedFolderNeverTakesAnExistingFolder() throws {
+        let label = String(repeating: "Work", count: 70)
+        let overlong = manager.dataRootDirectory.appendingPathComponent(String(repeating: "work", count: 70), isDirectory: true)
+        // Another account's data already sits under the capped name.
+        let capped = manager.dataRootDirectory.appendingPathComponent(ProfileManager.slug(for: label), isDirectory: true)
+        try FileManager.default.createDirectory(at: capped, withIntermediateDirectories: true)
+        try manager.store.save([ClaudeProfile(label: label, dataDirectory: overlong)])
+
+        let reloaded = makeManager()
+        reloaded.load()
+
+        let repaired = try XCTUnwrap(reloaded.profiles.first).dataDirectory
+        XCTAssertEqual(repaired.lastPathComponent, capped.lastPathComponent + "-2")
     }
 
     func testLegalFolderNamesAreNeverRepaired() throws {

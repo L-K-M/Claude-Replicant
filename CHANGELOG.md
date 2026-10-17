@@ -11,6 +11,8 @@
 - Optional menu bar item (Settings → Show in menu bar) to open, stop, and
   switch profiles without the window. While it is on, closing the window
   keeps the app running.
+- Opening a running profile whose window was closed reopens its window,
+  like a Dock click; before, only its menu bar appeared.
 
 ## 1.0.0
 

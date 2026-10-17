@@ -404,7 +404,7 @@ final class ProfileManagerTests: XCTestCase {
         let profile = try manager.addProfile(named: "Work")
         try manager.start(id: profile.id)
         manager.restart(id: profile.id)
-        XCTAssertTrue(manager.hasInstance(id: profile.id))
+        XCTAssertEqual(manager.state(of: profile.id), .restarting)
 
         manager.stopAll()
         XCTAssertEqual(manager.state(of: profile.id), .stopping)
@@ -412,7 +412,7 @@ final class ProfileManagerTests: XCTestCase {
         try XCTUnwrap(launcher.launchedHandles.first).simulateExit()
         await drainMainQueue()
         XCTAssertEqual(launcher.launches.count, 1)
-        XCTAssertFalse(manager.hasInstance(id: profile.id))
+        XCTAssertEqual(manager.state(of: profile.id), .stopped)
     }
 
     func testAQueuedStartForAnEntryNoLongerListedIsDropped() async throws {

@@ -274,11 +274,6 @@ final class ProfileManager {
         runningProfileIDs.contains(id)
     }
 
-    /// Running, or stopping with its old process still alive.
-    func hasInstance(id: UUID) -> Bool {
-        state(of: id) != .stopped
-    }
-
     func state(of id: UUID) -> InstanceState {
         if runningProfileIDs.contains(id) { return .running }
         guard stoppingProfileIDs.contains(id) else { return .stopped }
@@ -383,8 +378,8 @@ final class ProfileManager {
     }
 
     /// Asks the instance to quit cleanly (SIGTERM), then force-kills it if it
-    /// has not exited within a few seconds. The UI reflects "stopped"
-    /// immediately; internal bookkeeping is cleaned up when the process exits.
+    /// has not exited within a few seconds. The entry is `.stopping` until
+    /// the process exits; that also cancels a start queued behind it.
     func stop(id: UUID) {
         if startsAfterExit.contains(id) { startsAfterExit.remove(id) }
         guard isRunning(id: id), let handle = handles[id] else { return }

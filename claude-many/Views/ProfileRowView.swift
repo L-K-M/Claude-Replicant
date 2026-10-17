@@ -10,6 +10,7 @@ struct ProfileRowView: View {
     let cancelEditing: () -> Void
     let requestRename: () -> Void
     let requestDelete: () -> Void
+    let requestColor: (ProfileColor?) -> Void
 
     private var isRunning: Bool { manager.isRunning(id: profile.id) }
 
@@ -20,10 +21,10 @@ struct ProfileRowView: View {
                 .frame(width: 10, height: 10)
                 .accessibilityLabel(isRunning ? "Running" : "Stopped")
 
-            Image(nsImage: MacPlatform.applicationIcon(at: manager.bundleURL(for: profile.app)))
-                .resizable()
-                .frame(width: 24, height: 24)
-                .accessibilityLabel(profile.app.name)
+            ProfileAvatarView(
+                profile: profile,
+                appIcon: MacPlatform.applicationIcon(at: manager.bundleURL(for: profile.app))
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 if isEditing {
@@ -51,17 +52,21 @@ struct ProfileRowView: View {
             Spacer()
 
             if isRunning {
-                Button("Stop") {
+                Button {
                     manager.stop(id: profile.id)
+                } label: {
+                    Text("Stop").frame(minWidth: Self.actionButtonWidth)
                 }
                 .buttonStyle(.bordered)
                 .help("Quit this \(profile.app.name) instance")
             } else {
-                Button("Start") {
+                Button {
                     do { try manager.start(id: profile.id) }
                     catch { manager.report(error) }
+                } label: {
+                    Text("Start").frame(minWidth: Self.actionButtonWidth)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .disabled(manager.bundleStatus(for: profile.app) != .available)
                 .help(profile.isDefault
                       ? "Launch the normal \(profile.app.productName) instance"
@@ -71,6 +76,7 @@ struct ProfileRowView: View {
             Menu {
                 if !profile.isDefault {
                     Button("Rename…", action: requestRename)
+                    ProfileColorMenu(profile: profile, choose: requestColor)
                 }
                 Button("Reveal in Finder") {
                     MacPlatform.revealInFinder(profile.dataDirectory)
@@ -92,6 +98,9 @@ struct ProfileRowView: View {
         }
         .padding(.vertical, 4)
     }
+
+    /// Start and Stop share a width so the trailing menus line up.
+    private static let actionButtonWidth: CGFloat = 40
 
     private var subtitle: String {
         if profile.isDefault {

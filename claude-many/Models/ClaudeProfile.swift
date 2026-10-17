@@ -6,6 +6,8 @@ struct ClaudeProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
     var label: String
     let app: ManagedApp
     let location: ClaudeInstanceLocation
+    /// Chosen by the user; nil follows `displayColor`'s automatic pick.
+    var color: ProfileColor?
 
     static let standard = builtIn(for: .claude)
 
@@ -27,6 +29,24 @@ struct ClaudeProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
     }
 
     var isDefault: Bool { location == .standard }
+
+    /// The chosen color, or one derived from the id so it stays the same
+    /// across launches without being stored.
+    var displayColor: ProfileColor {
+        if let color { return color }
+        let palette = ProfileColor.allCases
+        let seed = withUnsafeBytes(of: id.uuid) { $0.reduce(0) { $0 &+ Int($1) } }
+        return palette[seed % palette.count]
+    }
+
+    /// Up to two letters for an avatar: "Personal Account" -> "PA".
+    var monogram: String {
+        label.split(whereSeparator: \.isWhitespace)
+            .prefix(2)
+            .compactMap(\.first)
+            .map { String($0).uppercased() }
+            .joined()
+    }
 
     /// The standard path is display metadata, never a directory the manager creates or copies.
     var dataDirectory: URL {
@@ -52,6 +72,7 @@ struct ClaudeProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
         case label
         case app
         case dataDirectory
+        case color
     }
 
     init(from decoder: Decoder) throws {
@@ -66,6 +87,8 @@ struct ClaudeProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
         app = try container.decodeIfPresent(ManagedApp.self, forKey: .app) ?? .claude
         let path = try container.decode(String.self, forKey: .dataDirectory)
         location = .isolated(dataDirectory: URL(fileURLWithPath: path, isDirectory: true))
+        // An unknown color (from a newer version) falls back to automatic.
+        color = try? container.decodeIfPresent(ProfileColor.self, forKey: .color)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -78,5 +101,6 @@ struct ClaudeProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
         try container.encode(label, forKey: .label)
         try container.encode(app, forKey: .app)
         try container.encode(dataDirectory.path, forKey: .dataDirectory)
+        try container.encodeIfPresent(color, forKey: .color)
     }
 }

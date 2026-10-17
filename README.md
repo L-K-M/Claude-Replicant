@@ -150,7 +150,8 @@ The profile list works like Finder: click to select (⇧/⌘ for multiples),
 double-click to open a profile, press **Return** to rename it inline, **⌘⌫**
 to delete, and drag to reorder profiles below the pinned Default entry.
 Right-click a row (or use the **Profiles** menu) for Open, Stop, Rename,
-Delete, Reveal in Finder, and Copy Data Folder Path. Add, rename, delete,
+Delete, Reveal in Finder, and Copy Data Folder Path. Each profile shows a
+colored monogram; pick its color from **Color** in the row's menu. Add, rename, delete,
 and reorder are all undoable via **⌘Z**. The window title bar shows how many
 instances are running, and quitting the window quits the app; running Claude
 instances keep running and are adopted on the next launch.

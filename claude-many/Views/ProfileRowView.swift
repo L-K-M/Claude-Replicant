@@ -72,6 +72,7 @@ struct ProfileRowView: View {
                 if !profile.isDefault {
                     Button("Rename…", action: requestRename)
                 }
+                Toggle("Open at Launch", isOn: opensAtLaunch)
                 Button("Reveal in Finder") {
                     MacPlatform.revealInFinder(profile.dataDirectory)
                 }
@@ -91,6 +92,13 @@ struct ProfileRowView: View {
             .help("More actions")
         }
         .padding(.vertical, 4)
+    }
+
+    private var opensAtLaunch: Binding<Bool> {
+        Binding(
+            get: { manager.opensAtLaunch(id: profile.id) },
+            set: { manager.setOpensAtLaunch($0, id: profile.id) }
+        )
     }
 
     private var subtitle: String {

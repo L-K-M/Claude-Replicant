@@ -13,6 +13,11 @@ final class ProfileManager {
     private(set) var runningProfileIDs: Set<UUID> = []
     private(set) var lastError: String?
     private var bundleURLs: [ManagedApp: URL]
+    /// Entries to open when Claude Replicant starts. Default entries can be
+    /// marked too, so the set lives in defaults rather than profiles.json.
+    private var launchProfileIDs: Set<UUID>
+    @ObservationIgnored private var didOpenLaunchProfiles = false
+    private static let launchProfilesDefaultsKey = "opensAtLaunchProfileIDs"
 
     /// Claude is always listed; ChatGPT once it has a profile.
     var listedApps: [ManagedApp] {
@@ -99,6 +104,9 @@ final class ProfileManager {
         if let claudeBundleURL { bundleURLs[.claude] = claudeBundleURL }
         if let chatGPTBundleURL { bundleURLs[.chatGPT] = chatGPTBundleURL }
         self.bundleURLs = bundleURLs
+
+        let launchIDs = self.defaults.stringArray(forKey: Self.launchProfilesDefaultsKey) ?? []
+        launchProfileIDs = Set(launchIDs.compactMap(UUID.init(uuidString:)))
     }
 
     /// Only written when the user picks a location other than the default.
@@ -395,6 +403,38 @@ final class ProfileManager {
         runningProfileIDs.remove(id)
         forceKillTasks[id]?.cancel()
         forceKillTasks[id] = nil
+    }
+
+    // MARK: Open at launch
+
+    func opensAtLaunch(id: UUID) -> Bool {
+        launchProfileIDs.contains(id)
+    }
+
+    /// Kept for removed profiles too, so undoing a delete keeps the choice.
+    func setOpensAtLaunch(_ opens: Bool, id: UUID) {
+        if opens {
+            launchProfileIDs.insert(id)
+        } else {
+            launchProfileIDs.remove(id)
+        }
+        defaults.set(launchProfileIDs.map(\.uuidString).sorted(), forKey: Self.launchProfilesDefaultsKey)
+    }
+
+    /// Starts the marked entries that are not running, once per run of the
+    /// app: the window can close and reopen without starting them again.
+    /// Running ones are left alone, so a login launch pulls no window
+    /// forward.
+    func openProfilesMarkedForLaunch() {
+        guard !didOpenLaunchProfiles else { return }
+        didOpenLaunchProfiles = true
+        for profile in listedProfiles where launchProfileIDs.contains(profile.id) && !isRunning(id: profile.id) {
+            do {
+                try start(id: profile.id)
+            } catch {
+                report(error)
+            }
+        }
     }
 
     // MARK: Settings

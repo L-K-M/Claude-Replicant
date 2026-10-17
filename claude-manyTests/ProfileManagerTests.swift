@@ -180,8 +180,12 @@ final class ProfileManagerTests: XCTestCase {
             String(repeating: "a", count: ProfileManager.maximumSlugLength) + "-2", isDirectory: true)
         let started = manager.dataRootDirectory.appendingPathComponent(String(repeating: "b", count: 200), isDirectory: true)
         try FileManager.default.createDirectory(at: started, withIntermediateDirectories: true)
+        // 172 bytes precomposed, 258 decomposed: over the limit as measured, yet it exists with data.
+        let inUse = manager.dataRootDirectory.appendingPathComponent(String(repeating: "å", count: 86), isDirectory: true)
+        try FileManager.default.createDirectory(at: inUse, withIntermediateDirectories: true)
         let saved = [ClaudeProfile(label: "Never started", dataDirectory: suffixed),
-                     ClaudeProfile(label: "Started", dataDirectory: started)]
+                     ClaudeProfile(label: "Started", dataDirectory: started),
+                     ClaudeProfile(label: "Started with marks", dataDirectory: inUse)]
         try manager.store.save(saved)
 
         let reloaded = makeManager()

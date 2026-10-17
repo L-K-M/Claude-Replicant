@@ -195,6 +195,17 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(try manager.store.load(), [renamed])
     }
 
+    func testARenameThatAlreadyFitsKeepsItsNumberedFolder() throws {
+        try manager.addProfile(named: "Work")
+        let second = try manager.addUntitledProfile(for: .claude)
+        try manager.renameProfile(id: second.id, to: "Work")
+        let numbered = try XCTUnwrap(manager.profiles.last).dataDirectory
+        XCTAssertEqual(numbered.lastPathComponent, "work-2")
+
+        try manager.renameProfile(id: second.id, to: "work")
+        XCTAssertEqual(manager.profiles.last?.dataDirectory, numbered, "work-2 already fits; no new folder name")
+    }
+
     func testRenameToTheSameSlugKeepsTheDataFolder() throws {
         let profile = try manager.addProfile(named: "Work")
         try manager.renameProfile(id: profile.id, to: "work")
@@ -208,7 +219,8 @@ final class ProfileManagerTests: XCTestCase {
         let beforeSecondRename = manager.profiles
         try manager.renameProfile(id: second.id, to: "Play")
         let beforeFirstRename = manager.profiles
-        // "work" is free again, so the first profile takes it and starts there.
+        // "work" was given up, but undo may need it back, so it stays reserved and
+        // the first profile gets "work-2".
         try manager.renameProfile(id: first.id, to: "Work")
         try manager.start(id: first.id)
         let folderInUse = try XCTUnwrap(manager.profiles.first { $0.id == first.id }).dataDirectory

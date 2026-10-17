@@ -25,7 +25,7 @@ final class StopEscalationTests: XCTestCase {
             claudeBundleURL: root.appendingPathComponent("Claude.app"),
             defaults: UserDefaults(suiteName: defaultsSuiteName)!,
             dataRootDirectory: root.appendingPathComponent("Profiles"),
-            stopTimeline: StopTimeline(terminateAfter: Self.step, killAfter: Self.step, abandonAfter: Self.step)
+            stopTimeline: StopTimeline(terminateAfter: Self.step, killAfter: Self.step, giveUpAfter: Self.step)
         )
     }
 
@@ -103,16 +103,31 @@ final class StopEscalationTests: XCTestCase {
         XCTAssertEqual(manager.state(of: profile.id), .running)
     }
 
-    func testAProcessThatOutlivesSIGKILLIsReleasedWithAnError() async throws {
+    func testAProcessThatOutlivesSIGKILLCountsAsRunningAgainWithAnError() async throws {
         let (profile, process) = try startProfile()
         process.survivesKill = true
         manager.restart(id: profile.id)
         manager.forceQuit(id: profile.id)
 
-        try await eventually("the entry stops waiting") { manager.state(of: profile.id) == .stopped }
+        // Discovery would find it anyway: it still runs in the profile's folder.
+        try await eventually("the entry stops waiting") { manager.state(of: profile.id) == .running }
+        launcher.runningHandlesToReturn = [process]
+        manager.refreshRunningProcesses()
 
-        XCTAssertEqual(launcher.launches.count, 1, "the old process may still hold the data folder")
+        XCTAssertEqual(manager.state(of: profile.id), .running)
+        XCTAssertEqual(launcher.launches.count, 1, "the queued restart is dropped: the old process holds the folder")
         let error = try XCTUnwrap(manager.lastError)
         XCTAssertTrue(error.contains("Work") && error.contains("\(process.processIdentifier)"), error)
+    }
+
+    func testARestartingInstanceStartsAgainAfterForceQuit() async throws {
+        let (profile, process) = try startProfile()
+        manager.restart(id: profile.id)
+
+        manager.forceQuit(id: profile.id)
+        process.simulateExit()
+
+        try await eventually("the new instance starts") { launcher.launches.count == 2 }
+        XCTAssertEqual(manager.state(of: profile.id), .running)
     }
 }

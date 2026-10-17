@@ -440,24 +440,23 @@ final class ProfileManager {
                     handle.terminateForcefully()
                     step = .killed
                 case .killed:
-                    self.abandon(id: id, handle: handle)
+                    self.giveUpStopping(id: id, handle: handle)
                     return
                 }
             }
         }
     }
 
-    /// Not even SIGKILL ended the process (it is stuck in the kernel). Stop
-    /// tracking it so the entry does not stay "Stopping…" forever, drop a
-    /// start queued behind it (the process may still hold the data folder),
-    /// and name the process to look for.
-    private func abandon(id: UUID, handle: ClaudeProcessHandle) {
+    /// Not even SIGKILL ended the process (it is stuck in the kernel). It
+    /// still runs in the profile's folder, as discovery would report anyway,
+    /// so the entry counts as running again instead of "Stopping…" forever.
+    /// A start queued behind it is dropped, and the error names the process.
+    private func giveUpStopping(id: UUID, handle: ClaudeProcessHandle) {
         guard handles[id] === handle else { return }
-        handle.terminationHandler = nil
-        handles[id] = nil
         stoppingProfileIDs.remove(id)
         startsAfterExit.remove(id)
         stopSupervisors[id] = nil
+        runningProfileIDs.insert(id)
         let label = listedProfiles.first { $0.id == id }?.label
         report(ProfileManagerError.didNotQuit(label: label, processIdentifier: handle.processIdentifier))
     }
@@ -603,7 +602,7 @@ enum ProfileManagerError: LocalizedError, Equatable {
             return "Default entries are built in and cannot be renamed or removed."
         case .didNotQuit(let label, let processIdentifier):
             let instance = label.map { "“\($0)”" } ?? "An instance"
-            return "\(instance) (process \(processIdentifier)) did not quit, even when forced. Check it in Activity Monitor before starting it again."
+            return "\(instance) (process \(processIdentifier)) did not quit, even when forced, and is still running. Check it in Activity Monitor."
         }
     }
 }

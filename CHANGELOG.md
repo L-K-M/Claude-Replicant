@@ -14,8 +14,8 @@
 - Stop asks the app to quit like ⌘Q and waits 30 seconds before killing
   it (was SIGTERM, then SIGKILL after 5 seconds), so it can save its
   state. Force Quit ends a stopping instance at once. An instance that
-  not even SIGKILL ends is reported instead of showing "Stopping…"
-  forever.
+  not even SIGKILL ends shows as running again with an error instead of
+  "Stopping…" forever.
 
 ## 1.0.0
 

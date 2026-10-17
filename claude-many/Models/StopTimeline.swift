@@ -7,8 +7,8 @@ import Foundation
 ///
 /// The quit request lets the app save its state. SIGTERM covers an app
 /// that missed it, SIGKILL one that hangs, and giving up one that not even
-/// SIGKILL ends (stuck in the kernel), so its entry does not stay
-/// "Stopping…" forever.
+/// SIGKILL ends (stuck in the kernel): its entry shows as running again
+/// with an error instead of "Stopping…" forever.
 struct StopTimeline: Sendable {
     enum Step: Sendable {
         case quitRequested
@@ -18,16 +18,16 @@ struct StopTimeline: Sendable {
 
     var terminateAfter: Duration
     var killAfter: Duration
-    var abandonAfter: Duration
+    var giveUpAfter: Duration
 
-    static let standard = StopTimeline(terminateAfter: .seconds(10), killAfter: .seconds(20), abandonAfter: .seconds(5))
+    static let standard = StopTimeline(terminateAfter: .seconds(10), killAfter: .seconds(20), giveUpAfter: .seconds(5))
 
     /// The wait before the step that follows `step`.
     func delay(after step: Step) -> Duration {
         switch step {
         case .quitRequested: return terminateAfter
         case .terminated: return killAfter
-        case .killed: return abandonAfter
+        case .killed: return giveUpAfter
         }
     }
 }

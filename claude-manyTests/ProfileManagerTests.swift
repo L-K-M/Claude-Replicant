@@ -53,6 +53,21 @@ final class FakeClaudeLauncher: ClaudeLauncher, @unchecked Sendable {
     }
 }
 
+/// A minimal app bundle: the folders and the Info.plist identity the
+/// manager checks before it starts or discovers an app.
+enum TestBundle {
+    static let claudeIdentifier = "com.anthropic.claudefordesktop"
+
+    static func make(at bundle: URL, identifier: String = claudeIdentifier) throws {
+        let contents = bundle.appendingPathComponent("Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: contents.appendingPathComponent("MacOS", isDirectory: true),
+                                                withIntermediateDirectories: true)
+        let info = try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": identifier],
+                                                      format: .xml, options: 0)
+        try info.write(to: contents.appendingPathComponent("Info.plist"))
+    }
+}
+
 final class FakeClaudeProcess: ClaudeProcessHandle, @unchecked Sendable {
     var processIdentifier: Int32 { 4242 }
     let app: ManagedApp
@@ -126,10 +141,7 @@ final class ProfileManagerTests: XCTestCase {
     }
 
     private func makeBundle() throws {
-        try FileManager.default.createDirectory(
-            at: tempDir.appendingPathComponent("Claude.app/Contents/MacOS", isDirectory: true),
-            withIntermediateDirectories: true
-        )
+        try TestBundle.make(at: tempDir.appendingPathComponent("Claude.app", isDirectory: true))
     }
 
     // MARK: Slugging
@@ -524,6 +536,51 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertFalse(manager.isRunning(id: one.id))
         XCTAssertFalse(manager.isRunning(id: two.id))
         XCTAssertNotNil(manager.lastError)
+    }
+
+    // MARK: Bundle identity
+
+    private func writeClaudeInfo(identifier: String) throws {
+        try TestBundle.make(at: tempDir.appendingPathComponent("Claude.app", isDirectory: true), identifier: identifier)
+    }
+
+    func testClaudeIsRecognizedByItsBundleIdentifier() throws {
+        try makeBundle()
+        XCTAssertEqual(manager.bundleStatus(for: .claude), .available)
+    }
+
+    func testAFolderThatIsNotAnAppIsTheWrongApp() throws {
+        try FileManager.default.createDirectory(at: tempDir.appendingPathComponent("Claude.app/Contents/MacOS"),
+                                                withIntermediateDirectories: true)
+        XCTAssertEqual(manager.bundleStatus(for: .claude), .otherApp)
+    }
+
+    func testInstancesOfTheWrongAppAreNotAdopted() throws {
+        try writeClaudeInfo(identifier: "com.apple.Safari")
+        launcher.runningHandlesToReturn = [FakeClaudeProcess(app: .claude)]
+        manager.load()
+        XCTAssertFalse(manager.isRunning(id: ClaudeProfile.standard.id))
+    }
+
+    func testInstancesStayAdoptedWhenTheBundleIsDeleted() throws {
+        XCTAssertEqual(manager.bundleStatus(for: .claude), .missing)
+        launcher.runningHandlesToReturn = [FakeClaudeProcess(app: .claude)]
+        manager.load()
+        XCTAssertTrue(manager.isRunning(id: ClaudeProfile.standard.id),
+                      "an instance whose bundle was removed must stay stoppable")
+    }
+
+    func testAnotherAppChosenAsClaudeIsRefusedWithItsOwnError() throws {
+        try writeClaudeInfo(identifier: "com.apple.Safari")
+        let profile = try manager.addProfile(named: "Work")
+
+        XCTAssertEqual(manager.bundleStatus(for: .claude), .otherApp)
+        XCTAssertThrowsError(try manager.start(id: profile.id)) {
+            XCTAssertEqual($0 as? ProfileManagerError,
+                           .otherApp(app: .claude, path: manager.bundleURL(for: .claude).path))
+            XCTAssertTrue($0.localizedDescription.contains("is not Claude Desktop"))
+        }
+        XCTAssertEqual(launcher.launches.count, 0)
     }
 
     // MARK: Bundle path persistence

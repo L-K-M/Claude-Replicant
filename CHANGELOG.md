@@ -8,6 +8,9 @@
 - File → New ChatGPT Profile (⌥⌘N); the toolbar **+** offers both apps.
   Untitled Claude profiles are now named "New Claude Profile".
 - Settings lists separate locations for Claude.app and ChatGPT.app.
+- Choosing a different app in Settings (say, Safari) is reported as the
+  wrong app instead of failing on Start with a missing-file error. Claude
+  is recognized by its bundle identifier.
 
 ## 1.0.0
 

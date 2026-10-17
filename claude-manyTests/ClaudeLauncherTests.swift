@@ -230,7 +230,7 @@ final class ClaudeLauncherTests: XCTestCase {
     private func makeRecordingExecutable(root: URL) throws -> (URL, URL) {
         let bundle = root.appendingPathComponent("Claude.app", isDirectory: true)
         let executable = bundle.appendingPathComponent("Contents/MacOS/Claude")
-        try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try TestBundle.make(at: bundle)
 
         // Record the real subprocess boundary without opening Claude or writing its normal data.
         let script = """

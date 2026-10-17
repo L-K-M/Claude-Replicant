@@ -80,9 +80,11 @@ struct MenuBarContent: View {
     }
 
     /// Errors are shown as an alert in the window, which may be closed.
+    /// Only a new error opens it, not one already waiting there.
     private func perform(_ action: () -> Void) {
+        let earlierError = manager.lastError
         action()
-        if manager.lastError != nil { showWindow() }
+        if let error = manager.lastError, error != earlierError { showWindow() }
     }
 }
 

@@ -73,6 +73,9 @@ struct ContentView: View {
         }
         .focusedSceneValue(\.profileCommands, commandContext)
         .onAppear(perform: syncCommandContext)
+        // With the menu bar item the app outlives this window; the Profiles
+        // menu must not act on a selection nobody can see.
+        .onDisappear { ProfileCommandCenter.shared.context = ProfileCommandContext() }
         .onChange(of: commandContextSignature) { _, _ in syncCommandContext() }
         .onChange(of: nameFieldFocused) { _, focused in
             // Clicking elsewhere commits an in-progress rename, like Finder.

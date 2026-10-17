@@ -116,10 +116,13 @@ final class UnlistedDataTests: XCTestCase {
     func testAFolderStaysOffTheListWhileAnInstanceStillQuitsInIt() async throws {
         let work = try manager.addProfile(named: "Work")
         try manager.start(id: work.id)
+        let process = try XCTUnwrap(launcher.launchedHandles.last)
+        launcher.runningHandlesToReturn = [process]
         try manager.removeProfile(id: work.id)
         XCTAssertEqual(manager.unlistedData, [], "the deleted profile's instance is still quitting")
 
-        launcher.launchedHandles.last?.simulateExit()
+        launcher.runningHandlesToReturn = []
+        process.simulateExit()
         await drainMainQueue()
         XCTAssertEqual(manager.unlistedData.map(\.directory.lastPathComponent), [work.dataDirectory.lastPathComponent])
     }
@@ -145,6 +148,34 @@ final class UnlistedDataTests: XCTestCase {
 
         XCTAssertThrowsError(try manager.restoreUnlistedData(at: folder))
         XCTAssertEqual(manager.profiles, [])
+    }
+
+    func testNothingIsOfferedWhileTheListCannotBeOpened() throws {
+        // A profile's folder, but the list naming it cannot be read now.
+        let folder = try makeFolder("work", containing: ".claude")
+        try FileManager.default.createDirectory(at: manager.store.fileURL, withIntermediateDirectories: true)
+        manager.load()
+
+        XCTAssertEqual(manager.unlistedData, [], "which folders are used is unknown")
+        XCTAssertThrowsError(try manager.trashUnlistedData(at: folder))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.path))
+    }
+
+    func testFoldersAnUntrackedInstanceRunsInAreNotOffered() throws {
+        // Left running by a profile deleted before Claude Replicant relaunched.
+        let folder = try makeFolder("work")
+        launcher.runningHandlesToReturn = [FakeClaudeProcess(dataDirectory: folder)]
+
+        manager.load()
+
+        XCTAssertEqual(manager.unlistedData, [])
+    }
+
+    func testFoldersNamedOnlyWithSeparatorsGetAName() throws {
+        _ = try makeFolder("---")
+        manager.load()
+
+        XCTAssertEqual(manager.unlistedData.first?.suggestedLabel, "Restored Profile")
     }
 
     func testOnlyUnlistedFoldersCanBeRestored() throws {
@@ -178,9 +209,7 @@ final class UnlistedDataTests: XCTestCase {
         launcher.runningHandlesToReturn = [FakeClaudeProcess(dataDirectory: folder)]
         manager.load()
 
-        XCTAssertThrowsError(try manager.trashUnlistedData(at: folder)) {
-            XCTAssertEqual($0 as? ProfileManagerError, .dataInUse(name: "work"))
-        }
+        XCTAssertThrowsError(try manager.trashUnlistedData(at: folder))
         XCTAssertTrue(FileManager.default.fileExists(atPath: folder.path))
     }
 

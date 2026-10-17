@@ -387,6 +387,7 @@ final class ProfileManager {
     /// Moves an unlisted folder to the Trash and returns where it went, for
     /// Undo. Refused while any instance runs in it, listed or not.
     func trashUnlistedData(at directory: URL) throws -> URL {
+        try ensureProfileListWritable()
         let data = try currentUnlistedData(at: directory)
         guard !instanceRuns(in: data.directory) else {
             throw ProfileManagerError.dataInUse(name: data.directory.lastPathComponent)
@@ -411,18 +412,32 @@ final class ProfileManager {
     }
 
     private func instanceRuns(in directory: URL) -> Bool {
-        let path = Self.comparablePath(directory)
-        return ManagedApp.allCases.contains { app in
-            let executable = bundleURL(for: app).appendingPathComponent(app.executablePath)
-            return launcher.runningHandles(app: app, executable: executable).contains { handle in
-                handle.dataDirectory.map(Self.comparablePath) == path
-            }
-        }
+        instanceDataDirectories().contains(Self.comparablePath(directory))
     }
 
-    /// Lists the root's visible subfolders that no profile uses. Never
-    /// creates the root.
+    /// Where any instance of either app runs, tracked or not, as comparable
+    /// paths.
+    private func instanceDataDirectories() -> Set<String> {
+        var directories: Set<String> = []
+        for app in ManagedApp.allCases {
+            let executable = bundleURL(for: app).appendingPathComponent(app.executablePath)
+            for handle in launcher.runningHandles(app: app, executable: executable) {
+                if let directory = handle.dataDirectory { directories.insert(Self.comparablePath(directory)) }
+            }
+        }
+        return directories
+    }
+
+    /// Lists the root's visible subfolders that no profile uses and no
+    /// running instance holds (one a deleted profile left running before
+    /// a relaunch is never adopted). Nothing while the list cannot be
+    /// opened: which folders it names is unknown. Never creates the root.
     private func rescanUnlistedData() {
+        guard unopenedProfileList == nil else {
+            scannedUnlistedData = []
+            return
+        }
+
         let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey, .contentModificationDateKey]
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: dataRootDirectory, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
@@ -431,7 +446,13 @@ final class ProfileManager {
             return
         }
 
-        let used = Set(profiles.map { Self.comparablePath($0.dataDirectory) })
+        // Tracked instances are left to `unlistedData`, so a deleted
+        // profile's folder shows up as soon as its instance exits.
+        var used = Set(profiles.map { Self.comparablePath($0.dataDirectory) })
+        if !entries.isEmpty {
+            let tracked = Set(handles.values.compactMap(\.dataDirectory).map(Self.comparablePath))
+            used.formUnion(instanceDataDirectories().subtracting(tracked))
+        }
         scannedUnlistedData = entries.compactMap { folder -> UnlistedProfileData? in
             guard let values = try? folder.resourceValues(forKeys: Set(keys)),
                   values.isDirectory == true, values.isSymbolicLink != true,

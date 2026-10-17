@@ -90,7 +90,8 @@ struct ContentView: View {
             commitEditing: commitEditing,
             cancelEditing: cancelEditing,
             requestRename: { beginRename(profile.id) },
-            requestDelete: { requestDelete([profile.id]) }
+            requestDelete: { requestDelete([profile.id]) },
+            requestColor: { setColor($0, for: profile.id) }
         )
         .tag(profile.id)
     }
@@ -220,6 +221,7 @@ struct ContentView: View {
             Divider()
             if targets.count == 1, !targets[0].isDefault {
                 Button("Rename…") { beginRename(targets[0].id) }
+                ProfileColorMenu(profile: targets[0]) { setColor($0, for: targets[0].id) }
             }
             Button("Reveal in Finder") { reveal(ids) }
             if targets.count == 1 {
@@ -315,6 +317,12 @@ struct ContentView: View {
     private func cancelEditing() {
         editingID = nil
         nameFieldFocused = false
+    }
+
+    private func setColor(_ color: ProfileColor?, for id: UUID) {
+        performProfileEdit("Change Color") {
+            try manager.setColor(color, forProfile: id)
+        }
     }
 
     // MARK: Delete

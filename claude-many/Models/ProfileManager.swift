@@ -447,6 +447,10 @@ final class ProfileManager {
         return dataRootDirectory.appendingPathComponent(candidate, isDirectory: true)
     }
 
+    /// Folder names stay far below APFS's 255-byte limit, with room for a
+    /// "-N" suffix.
+    static let maximumSlugLength = 64
+
     /// "My Work (2)" -> "my-work-2". Lowercase, non-alphanumerics become
     /// single dashes, trimmed.
     static func slug(for label: String) -> String {
@@ -464,6 +468,17 @@ final class ProfileManager {
             }
         }
         if result.isEmpty { result = "profile" }
+        return truncated(result, toUTF8Length: maximumSlugLength)
+    }
+
+    /// Cuts whole characters, then any dash left dangling at the end.
+    private static func truncated(_ slug: String, toUTF8Length limit: Int) -> String {
+        var result = ""
+        for character in slug {
+            guard result.utf8.count + character.utf8.count <= limit else { break }
+            result.append(character)
+        }
+        while result.hasSuffix("-") { result.removeLast() }
         return result
     }
 }

@@ -142,6 +142,16 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(ProfileManager.slug(for: "Claude"), "claude")
     }
 
+    func testVeryLongNamesStillGetAFolderTheFileSystemAccepts() throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: String(repeating: "Ångström ", count: 40))
+
+        XCTAssertLessThanOrEqual(profile.dataDirectory.lastPathComponent.utf8.count, ProfileManager.maximumSlugLength)
+        XCTAssertFalse(profile.dataDirectory.lastPathComponent.hasSuffix("-"))
+        XCTAssertNoThrow(try manager.start(id: profile.id), "the folder is created on first start")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: profile.dataDirectory.path))
+    }
+
     // MARK: Add / rename / remove
 
     func testAddProfileCreatesUniqueDataDirsUnderProfilesRoot() throws {

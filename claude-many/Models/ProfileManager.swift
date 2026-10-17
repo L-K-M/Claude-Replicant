@@ -129,8 +129,8 @@ final class ProfileManager {
         }
         releaseUnlistedBuiltIns()
 
-        // Classic at the configured path cannot be started, so never manage
-        // its normal instance either.
+        // Classic or another app at the configured path cannot be started,
+        // so never manage instances running from it either.
         for app in listedApps where bundleStatus(for: app).isApp {
             let executable = bundleURL(for: app).appendingPathComponent(app.executablePath)
             for handle in launcher.runningHandles(app: app, executable: executable) {

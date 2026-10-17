@@ -67,10 +67,6 @@ enum ManagedApp: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// Whether a bundle without a readable identifier may still be used.
-    /// Claude has no lookalike build; ChatGPT must prove it is not Classic.
-    private var acceptsUnidentifiedBundle: Bool { self == .claude }
-
     /// Default Claude predates ChatGPT support and is always listed. Default
     /// ChatGPT appears with the first ChatGPT profile, so an installed
     /// ChatGPT is never added to Start All on its own.
@@ -100,7 +96,8 @@ enum ManagedApp: String, Codable, CaseIterable, Identifiable, Sendable {
         guard let data = try? Data(contentsOf: infoURL),
               let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
               let identifier = info["CFBundleIdentifier"] as? String else {
-            return acceptsUnidentifiedBundle ? .available : .unsupported
+            // A folder named like an app, or a damaged bundle.
+            return .otherApp
         }
 
         if identifier == bundleIdentifier { return .available }
@@ -114,9 +111,12 @@ enum AppBundleStatus: Equatable, Sendable {
     case missing
     /// Installed, but a build that cannot isolate profiles (ChatGPT Classic).
     case unsupported
-    /// A different app, e.g. Safari.app picked in Settings.
+    /// A different app, e.g. Safari.app picked in Settings, or a folder
+    /// that is not an app bundle.
     case otherApp
 
-    /// Whether this location runs the app at all, so its instances can be discovered.
+    /// Whether instances of the app may run from this location, so they
+    /// should be discovered. `.missing` counts: deleting the bundle while
+    /// its instances run must not orphan them.
     var isApp: Bool { self == .available || self == .missing }
 }

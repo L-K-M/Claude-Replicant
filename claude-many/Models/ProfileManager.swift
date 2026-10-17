@@ -468,8 +468,9 @@ final class ProfileManager {
                 pendingDash = true
             }
         }
-        if result.isEmpty { result = "profile" }
-        return truncated(result, toUTF8Length: maximumSlugLength)
+        // After the cut: one character can be longer than the whole limit.
+        let slug = truncated(result, toUTF8Length: maximumSlugLength)
+        return slug.isEmpty ? "profile" : slug
     }
 
     /// Cuts whole characters, then any dash left dangling at the end.

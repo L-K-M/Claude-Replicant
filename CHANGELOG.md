@@ -9,7 +9,7 @@
   Untitled Claude profiles are now named "New Claude Profile".
 - Settings lists separate locations for Claude.app and ChatGPT.app.
 - Very long profile names no longer make Start fail with "File name too
-  long": data folder names are capped at 64 bytes.
+  long": the name part of a data folder is capped at 64 bytes.
 
 ## 1.0.0
 

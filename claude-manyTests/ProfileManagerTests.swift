@@ -154,6 +154,15 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: profile.dataDirectory.path))
     }
 
+    func testCappedSlugsNeverEndInADashOrComeOutEmpty() {
+        XCTAssertEqual(ProfileManager.slug(for: String(repeating: "a", count: 63) + " bc"),
+                       String(repeating: "a", count: 63))
+        // One character made of a letter and many combining marks is longer than the cap.
+        let stacked = "e" + String(repeating: "\u{0301}", count: 40)
+        XCTAssertEqual(ProfileManager.slug(for: stacked), "profile",
+                       "an empty slug would put the profile in the shared Profiles folder")
+    }
+
     // MARK: Add / rename / remove
 
     func testAddProfileCreatesUniqueDataDirsUnderProfilesRoot() throws {

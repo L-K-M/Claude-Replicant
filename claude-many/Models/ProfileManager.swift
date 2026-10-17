@@ -115,11 +115,36 @@ final class ProfileManager {
     func load() {
         do {
             profiles = try store.load()
+            repairOverlongDataDirectories()
         } catch {
             lastError = "Could not load profiles: \(error.localizedDescription)"
             return
         }
         refreshRunningProcesses()
+    }
+
+    /// Profiles saved before folder names were capped can hold a name the
+    /// file system refuses. Such a folder can never have been created, so
+    /// give the profile a fresh, capped one. Names merely longer than the
+    /// cap ("…-2" after a capped base) are valid and stay.
+    private func repairOverlongDataDirectories() {
+        var repaired = false
+        for index in profiles.indices {
+            let directory = profiles[index].dataDirectory
+            let storedLength = directory.lastPathComponent.decomposedStringWithCanonicalMapping.utf8.count
+            guard storedLength > Self.maximumFileNameLength,
+                  directory.deletingLastPathComponent().standardizedFileURL.path == dataRootDirectory.standardizedFileURL.path,
+                  !FileManager.default.fileExists(atPath: directory.path),
+                  let replacement = try? makeUniqueDataDirectory(for: profiles[index].label) else { continue }
+            profiles[index] = profiles[index].withDataDirectory(replacement)
+            repaired = true
+        }
+        guard repaired else { return }
+        do {
+            try persist()
+        } catch {
+            report(error)
+        }
     }
 
     /// Reconcile external starts as well as instances left over from an app relaunch.
@@ -447,12 +472,24 @@ final class ProfileManager {
         return dataRootDirectory.appendingPathComponent(candidate, isDirectory: true)
     }
 
+    /// Folder names stay below the 255-byte file name limit even when the
+    /// file system stores them decomposed (at most about three times
+    /// longer) and a "-N" suffix is added.
+    static let maximumSlugLength = 64
+    /// NAME_MAX on APFS and HFS+, in bytes of the stored (decomposed) name.
+    private static let maximumFileNameLength = 255
+
     /// "My Work (2)" -> "my-work-2". Lowercase, non-alphanumerics become
     /// single dashes, trimmed.
     static func slug(for label: String) -> String {
         var result = ""
         var pendingDash = false
         for scalar in label.lowercased().unicodeScalars {
+            // A mark that opens a word has no letter of its own and would
+            // fuse with the dash before it ("-\u{301}" is one character).
+            if Self.isCombiningMark(scalar) && (pendingDash || result.isEmpty) {
+                continue
+            }
             if CharacterSet.alphanumerics.contains(scalar) {
                 if pendingDash && !result.isEmpty {
                     result.append("-")
@@ -463,7 +500,28 @@ final class ProfileManager {
                 pendingDash = true
             }
         }
-        if result.isEmpty { result = "profile" }
+        // After the cut: one character can be longer than the whole limit.
+        let slug = truncated(result, toUTF8Length: maximumSlugLength)
+        return slug.isEmpty ? "profile" : slug
+    }
+
+    private static func isCombiningMark(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .nonspacingMark, .spacingMark, .enclosingMark: return true
+        default: return false
+        }
+    }
+
+    /// Cuts whole characters, then any dash left dangling at the end.
+    private static func truncated(_ slug: String, toUTF8Length limit: Int) -> String {
+        var result = ""
+        for character in slug {
+            guard result.utf8.count + character.utf8.count <= limit else { break }
+            result.append(character)
+        }
+        // By character: a dash fused with a mark after it ("-\u{FF9E}") is
+        // still a dangling dash.
+        while result.last?.unicodeScalars.first == "-" { result.removeLast() }
         return result
     }
 }

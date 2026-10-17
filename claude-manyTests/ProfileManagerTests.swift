@@ -140,6 +140,112 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(ProfileManager.slug(for: "Ötzi's äccount"), "ötzi-s-äccount")
         XCTAssertEqual(ProfileManager.slug(for: "   "), "profile")
         XCTAssertEqual(ProfileManager.slug(for: "Claude"), "claude")
+        // A combining mark with no letter before it would fuse with a dash.
+        XCTAssertEqual(ProfileManager.slug(for: "Work \u{301}"), "work")
+        XCTAssertEqual(ProfileManager.slug(for: "\u{301}Work"), "work")
+        XCTAssertEqual(ProfileManager.slug(for: "a -\u{301}b"), "a-b")
+        // A halfwidth sound mark is a letter (Lm) that still fuses with a dash.
+        XCTAssertEqual(ProfileManager.slug(for: "Work-\u{FF9E}"), "work")
+    }
+
+    func testVeryLongNamesStillGetAFolderTheFileSystemAccepts() throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: String(repeating: "Ångström ", count: 40))
+
+        // The URL may come back decomposed on macOS ("å" as a + ring); compare precomposed.
+        let name = profile.dataDirectory.lastPathComponent.precomposedStringWithCanonicalMapping
+        XCTAssertLessThanOrEqual(name.utf8.count, ProfileManager.maximumSlugLength)
+        XCTAssertFalse(name.hasSuffix("-"))
+        XCTAssertNoThrow(try manager.start(id: profile.id), "the folder is created on first start")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: profile.dataDirectory.path))
+        // The name as the file system stored it, decomposed or not, stays well under 255 bytes.
+        let stored = try FileManager.default.contentsOfDirectory(atPath: manager.dataRootDirectory.path)
+        XCTAssertEqual(stored.count, 1)
+        XCTAssertLessThan(try XCTUnwrap(stored.first).utf8.count, 255)
+    }
+
+    func testProfilesSavedWithAnOverlongFolderAreRepairedOnLoad() throws {
+        try makeBundle()
+        let overlong = manager.dataRootDirectory.appendingPathComponent(String(repeating: "work", count: 70), isDirectory: true)
+        let saved = ClaudeProfile(label: String(repeating: "Work", count: 70), dataDirectory: overlong)
+        try manager.store.save([saved])
+
+        let reloaded = makeManager()
+        reloaded.load()
+
+        let repaired = try XCTUnwrap(reloaded.profiles.first)
+        XCTAssertEqual(repaired.id, saved.id)
+        XCTAssertEqual(repaired.dataDirectory.lastPathComponent.utf8.count, ProfileManager.maximumSlugLength)
+        XCTAssertEqual(try reloaded.store.load(), [repaired], "the repair is saved")
+        XCTAssertNoThrow(try reloaded.start(id: saved.id))
+    }
+
+    func testARepairedFolderNeverTakesAnExistingFolder() throws {
+        let label = String(repeating: "Work", count: 70)
+        let overlong = manager.dataRootDirectory.appendingPathComponent(String(repeating: "work", count: 70), isDirectory: true)
+        // Another account's data already sits under the capped name.
+        let capped = manager.dataRootDirectory.appendingPathComponent(ProfileManager.slug(for: label), isDirectory: true)
+        try FileManager.default.createDirectory(at: capped, withIntermediateDirectories: true)
+        try manager.store.save([ClaudeProfile(label: label, dataDirectory: overlong)])
+
+        let reloaded = makeManager()
+        reloaded.load()
+
+        let repaired = try XCTUnwrap(reloaded.profiles.first).dataDirectory
+        XCTAssertEqual(repaired.lastPathComponent, capped.lastPathComponent + "-2")
+    }
+
+    func testARepairedFolderNeverTakesAnotherProfilesFolderName() throws {
+        let label = String(repeating: "Work", count: 70)
+        let overlong = manager.dataRootDirectory.appendingPathComponent(String(repeating: "work", count: 70), isDirectory: true)
+        // Saved, never started: its folder does not exist yet.
+        let capped = manager.dataRootDirectory.appendingPathComponent(ProfileManager.slug(for: label), isDirectory: true)
+        try manager.store.save([ClaudeProfile(label: "Other", dataDirectory: capped),
+                                ClaudeProfile(label: label, dataDirectory: overlong)])
+
+        let reloaded = makeManager()
+        reloaded.load()
+
+        XCTAssertEqual(reloaded.profiles.map(\.dataDirectory.lastPathComponent),
+                       [capped.lastPathComponent, capped.lastPathComponent + "-2"])
+    }
+
+    func testLegalFolderNamesAreNeverRepaired() throws {
+        // A capped name plus a uniqueness suffix is longer than the cap but valid.
+        let suffixed = manager.dataRootDirectory.appendingPathComponent(
+            String(repeating: "a", count: ProfileManager.maximumSlugLength) + "-2", isDirectory: true)
+        let started = manager.dataRootDirectory.appendingPathComponent(String(repeating: "b", count: 200), isDirectory: true)
+        try FileManager.default.createDirectory(at: started, withIntermediateDirectories: true)
+        // 172 bytes precomposed, 258 decomposed: over the limit as measured, yet it exists with data.
+        let inUse = manager.dataRootDirectory.appendingPathComponent(String(repeating: "å", count: 86), isDirectory: true)
+        try FileManager.default.createDirectory(at: inUse, withIntermediateDirectories: true)
+        let saved = [ClaudeProfile(label: "Never started", dataDirectory: suffixed),
+                     ClaudeProfile(label: "Started", dataDirectory: started),
+                     ClaudeProfile(label: "Started with marks", dataDirectory: inUse)]
+        try manager.store.save(saved)
+
+        let reloaded = makeManager()
+        reloaded.load()
+        reloaded.load()
+
+        XCTAssertEqual(reloaded.profiles.map(\.dataDirectory), saved.map(\.dataDirectory))
+    }
+
+    func testLongNamesSharingAPrefixGetSeparateFolders() throws {
+        let prefix = String(repeating: "a", count: ProfileManager.maximumSlugLength)
+        let first = try manager.addProfile(named: prefix + " one")
+        let second = try manager.addProfile(named: prefix + " two")
+        XCTAssertNotEqual(first.dataDirectory, second.dataDirectory)
+        XCTAssertEqual(second.dataDirectory.lastPathComponent, prefix + "-2")
+    }
+
+    func testCappedSlugsNeverEndInADashOrComeOutEmpty() {
+        XCTAssertEqual(ProfileManager.slug(for: String(repeating: "a", count: 63) + " bc"),
+                       String(repeating: "a", count: 63))
+        // One character made of a letter and many combining marks is longer than the cap.
+        let stacked = "e" + String(repeating: "\u{0301}", count: 40)
+        XCTAssertEqual(ProfileManager.slug(for: stacked), "profile",
+                       "an empty slug would put the profile in the shared Profiles folder")
     }
 
     // MARK: Add / rename / remove

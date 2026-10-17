@@ -15,7 +15,7 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ForEach(manager.listedApps.filter { manager.bundleStatus(for: $0) != .available }) { app in
+            ForEach(manager.listedApps.filter { manager.lastKnownBundleStatus(for: $0) != .available }) { app in
                 bundleBanner(for: app)
                 Divider()
             }
@@ -110,7 +110,7 @@ struct ContentView: View {
     /// Shown while a listed app is missing or is a build that cannot run profiles.
     private func bundleBanner(for app: ManagedApp) -> some View {
         let path = MacPlatform.homeRelativePath(of: manager.bundleURL(for: app))
-        let unsupported = manager.bundleStatus(for: app) == .unsupported
+        let unsupported = manager.lastKnownBundleStatus(for: app) == .unsupported
         return HStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .symbolRenderingMode(.multicolor)
@@ -151,7 +151,7 @@ struct ContentView: View {
         context.canReveal = !targets.isEmpty
         context.canCopyPath = targets.count == 1
         context.canDelete = !deletables.isEmpty
-        let launchableApps = manager.listedApps.filter { manager.bundleStatus(for: $0) == .available }
+        let launchableApps = manager.listedApps.filter { manager.lastKnownBundleStatus(for: $0) == .available }
         context.canStartAll = manager.listedProfiles.contains {
             launchableApps.contains($0.app) && !manager.isRunning(id: $0.id)
         }
@@ -185,7 +185,7 @@ struct ContentView: View {
         let runningPart = manager.runningProfileIDs.sorted { $0.uuidString < $1.uuidString }
             .map(\.uuidString).joined()
         let editingPart = editingID?.uuidString ?? ""
-        let bundlePart = ManagedApp.allCases.map { "\(manager.bundleStatus(for: $0))" }.joined(separator: ",")
+        let bundlePart = ManagedApp.allCases.map { "\(manager.lastKnownBundleStatus(for: $0))" }.joined(separator: ",")
         return [selectionPart, editingPart, profilePart, runningPart, bundlePart]
             .joined(separator: "|")
     }

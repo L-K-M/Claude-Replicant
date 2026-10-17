@@ -8,6 +8,9 @@
 - File → New ChatGPT Profile (⌥⌘N); the toolbar **+** offers both apps.
   Untitled Claude profiles are now named "New Claude Profile".
 - Settings lists separate locations for Claude.app and ChatGPT.app.
+- Lighter status checks: the two-second scan skips unrelated processes
+  by their kernel command name, Start All scans once, and the list no
+  longer reads app bundles or icons from disk while drawing.
 
 ## 1.0.0
 

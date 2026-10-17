@@ -38,11 +38,13 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 480)
         .padding()
+        // Keeps the bundle checks current if the main window closes first.
+        .task { await manager.monitorRunningProcesses() }
     }
 
     private func applicationSection(for app: ManagedApp) -> some View {
         let bundle = manager.bundleURL(for: app)
-        let status = manager.bundleStatus(for: app)
+        let status = manager.lastKnownBundleStatus(for: app)
         return Section("\(app.name) Application") {
             LabeledContent(app.bundleName) {
                 HStack(spacing: 8) {

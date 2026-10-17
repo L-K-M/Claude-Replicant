@@ -526,6 +526,33 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertNotNil(manager.lastError)
     }
 
+    func testStartAllScansForRunningInstancesOnce() throws {
+        try makeBundle()
+        try manager.addProfile(named: "One")
+        try manager.addProfile(named: "Two")
+        let scansBefore = launcher.discoveryCalls
+
+        manager.startAll()
+
+        XCTAssertEqual(launcher.launches.count, 3)
+        XCTAssertEqual(launcher.discoveryCalls - scansBefore, manager.listedApps.count,
+                       "one scan per listed app, not one per profile")
+    }
+
+    func testViewsSeeTheBundleStatusOfTheLastRefresh() throws {
+        XCTAssertEqual(manager.lastKnownBundleStatus(for: .claude), .missing)
+
+        try makeBundle()
+        XCTAssertEqual(manager.lastKnownBundleStatus(for: .claude), .missing, "rendering must not read the disk")
+        XCTAssertEqual(manager.bundleStatus(for: .claude), .available)
+
+        manager.refreshRunningProcesses()
+        XCTAssertEqual(manager.lastKnownBundleStatus(for: .claude), .available)
+
+        manager.setBundlePath(tempDir.appendingPathComponent("Elsewhere/Claude.app").path, for: .claude)
+        XCTAssertEqual(manager.lastKnownBundleStatus(for: .claude), .missing)
+    }
+
     // MARK: Bundle path persistence
 
     func testBundlePathPersistsAcrossManagerInstances() throws {

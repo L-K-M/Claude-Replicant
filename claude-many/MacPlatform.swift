@@ -55,12 +55,19 @@ enum MacPlatform {
         return candidate
     }
 
-    /// The app's Finder icon, or the generic application icon while it is missing.
+    @MainActor private static var applicationIcons: [String: NSImage] = [:]
+
+    /// The app's Finder icon, or the generic application icon while it is
+    /// missing. Rows ask on every render, so found icons are kept.
+    @MainActor
     static func applicationIcon(at url: URL) -> NSImage {
+        if let icon = applicationIcons[url.path] { return icon }
         guard FileManager.default.fileExists(atPath: url.path) else {
             return NSWorkspace.shared.icon(for: .applicationBundle)
         }
-        return NSWorkspace.shared.icon(forFile: url.path)
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        applicationIcons[url.path] = icon
+        return icon
     }
 
     static func copyPathToPasteboard(_ url: URL) {

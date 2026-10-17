@@ -104,6 +104,19 @@ final class UpdateAwarenessTests: XCTestCase {
         XCTAssertEqual(manager.profilesClosedForUpdate, [])
     }
 
+    func testAQuitNoticedOnlyAfterTheUpdateIsStillReported() async throws {
+        try installClaude(version: "1.0")
+        let (work, process) = try startProfile()
+
+        // The updater swaps the bundle before the quit reaches the main queue.
+        process.simulateExit()
+        try installClaude(version: "1.1")
+        await drainMainQueue()
+        manager.refreshRunningProcesses()
+
+        XCTAssertEqual(manager.profilesClosedForUpdate.map(\.id), [work.id])
+    }
+
     func testAnOutdatedInstanceQuittingLaterIsNotBlamedOnTheUpdate() async throws {
         try installClaude(version: "1.0")
         let (_, process) = try startProfile()

@@ -23,9 +23,9 @@ final class ProfileManager {
     private var instanceVersions: [UUID: String] = [:]
     /// The version whose restart notice the user postponed, per app.
     private var postponedRestartVersions: [ManagedApp: String] = [:]
-    /// Isolated entries that quit on their own, with the version installed
-    /// when they quit, until an update shows up or `updateRelaunchWindow`
-    /// passes.
+    /// Isolated entries that quit on their own, with the version the last
+    /// scan before the quit found installed, until an update shows up or
+    /// `updateRelaunchWindow` passes.
     @ObservationIgnored private var recentExits: [UUID: (installed: String?, date: Date)] = [:]
     private var closedForUpdateIDs: [UUID] = []
     private var bundleURLs: [ManagedApp: URL]
@@ -181,6 +181,7 @@ final class ProfileManager {
             guard forceKillTasks[id] == nil else { continue }
             handle.terminationHandler = nil
             handles[id] = nil
+            instanceVersions[id] = nil
             runningProfileIDs.remove(id)
         }
     }
@@ -461,9 +462,11 @@ final class ProfileManager {
         // bookkeeping of a freshly restarted instance.
         guard handles[id] === handle else { return }
         // Quit on its own, perhaps to install an update: the updater
-        // replaces the bundle after the app quits. See `profilesClosedForUpdate`.
+        // replaces the bundle after the app quits. The last scan's version,
+        // not the bundle's now: the quit can reach here after the swap.
+        // See `profilesClosedForUpdate`.
         if !stoppingProfileIDs.contains(id), let app = profiles.first(where: { $0.id == id })?.app {
-            recentExits[id] = (app.bundleVersion(at: bundleURL(for: app)), Date())
+            recentExits[id] = (installedVersions[app], Date())
         }
         instanceVersions[id] = nil
         handles[id] = nil

@@ -11,6 +11,9 @@
 - A profile that is shutting down shows "Stopping…" until its instance has
   quit, instead of a Start button that fails. Restart (⌘R) quits and reopens a profile;
   Open or Start All during shutdown start it again once it has quit.
+- The Profiles menu greys out commands that do not apply to the
+  selection; before, AppKit kept every item enabled. Return renames only
+  from the profile list, no longer from other windows or text fields.
 
 ## 1.0.0
 

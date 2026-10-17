@@ -16,6 +16,19 @@ profile per login you have.
 A tiny native macOS app (Swift/SwiftUI) that manages one private data
 directory per profile and launches Claude Desktop or ChatGPT pointed at it.
 
+## Install
+
+Download the DMG or ZIP from the latest release and move
+`Claude Replicant.app` to `/Applications`. The app is ad-hoc signed, not
+notarized, so macOS blocks its first launch:
+
+- **macOS 15 Sequoia and later:** open the app once and dismiss the warning,
+  then open **System Settings → Privacy & Security**, click **Open Anyway**
+  next to the Claude Replicant message, and confirm. Control-clicking and
+  choosing Open no longer bypasses this check.
+- **macOS 14 Sonoma:** Control-click the app in Finder, choose **Open**, and
+  confirm.
+
 ## What it is
 
 - **Default Claude** is always first in the list. It uses your existing
@@ -210,7 +223,8 @@ a draft GitHub release. The gated live smoke test is described under
 - **Auto-updates apply to every profile.** The Claude.app bundle is shared;
   an update replaces the binary all profiles launch. Profile data is
   retained, but an updater relaunch may drop profile arguments. Quit profile
-  instances before updating and reopen them through claude-many afterwards.
+  instances before updating and reopen them through Claude Replicant
+  afterwards.
 - **Managed local storage is per profile**, under
   `~/Library/Application Support/Claude-Many/Profiles/<slug>/`, with Code
   configuration in `.claude/`. Claude Replicant does not copy or modify your

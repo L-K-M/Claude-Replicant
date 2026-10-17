@@ -77,8 +77,10 @@ jobs:
           body: |
             ### Unsigned build
 
-            This app is ad-hoc signed, not Developer ID signed or notarized.
-            Gatekeeper may require Control-clicking the app and choosing Open.
+            This app is ad-hoc signed, not Developer ID signed or notarized,
+            so macOS blocks its first launch. On macOS 15 or later, open it
+            once, then click Open Anyway in System Settings → Privacy &
+            Security. On macOS 14, Control-click the app and choose Open.
           files: release/*
 
       - name: Verify published assets

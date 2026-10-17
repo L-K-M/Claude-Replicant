@@ -31,6 +31,8 @@ final class OpenAtLaunchTests: XCTestCase {
             store: ProfileStore(fileURL: root.appendingPathComponent("profiles.json")),
             launcher: launcher,
             claudeBundleURL: root.appendingPathComponent("Claude.app"),
+            // Never the Mac's own ChatGPT: tests rely on it being missing.
+            chatGPTBundleURL: root.appendingPathComponent("ChatGPT.app"),
             defaults: defaults,
             dataRootDirectory: root.appendingPathComponent("Profiles")
         )
@@ -83,6 +85,18 @@ final class OpenAtLaunchTests: XCTestCase {
 
         XCTAssertEqual(launcher.launches.map(\.location), [work.location], "Work still opens")
         XCTAssertNotNil(manager.lastError, "a failure is reported though a later entry started")
+    }
+
+    func testALoadErrorSurvivesTheLaunch() throws {
+        manager.setOpensAtLaunch(true, id: ClaudeProfile.standard.id)
+        try Data("not json".utf8).write(to: root.appendingPathComponent("profiles.json"))
+        manager.load()
+        let loadError = try XCTUnwrap(manager.lastError)
+
+        manager.openProfilesMarkedForLaunch()
+
+        XCTAssertEqual(launcher.launches.count, 1, "Default Claude still opens")
+        XCTAssertEqual(manager.lastError, loadError, "the user must still learn why the list is empty")
     }
 
     func testUndoingADeleteKeepsTheChoice() throws {

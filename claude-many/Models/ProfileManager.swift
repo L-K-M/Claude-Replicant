@@ -425,10 +425,12 @@ final class ProfileManager {
     /// app: the window can close and reopen without starting them again.
     /// Running ones are left alone, so a login launch pulls no window
     /// forward. The first failure is reported after the rest have started,
-    /// since a successful start clears the error.
+    /// since a successful start clears the error; so is an error from
+    /// before, such as a list that could not be loaded.
     func openProfilesMarkedForLaunch() {
         guard !didOpenLaunchProfiles else { return }
         didOpenLaunchProfiles = true
+        let earlierError = lastError
         var firstFailure: (any Error)?
         for profile in listedProfiles where launchProfileIDs.contains(profile.id) && !isRunning(id: profile.id) {
             do {
@@ -437,7 +439,11 @@ final class ProfileManager {
                 firstFailure = firstFailure ?? error
             }
         }
-        if let firstFailure { report(firstFailure) }
+        if let firstFailure {
+            report(firstFailure)
+        } else if lastError == nil {
+            lastError = earlierError
+        }
     }
 
     // MARK: Settings

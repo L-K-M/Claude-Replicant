@@ -38,7 +38,7 @@ struct ContentView: View {
             }
             .listStyle(.inset(alternatesRowBackgrounds: true))
             .contextMenu(forSelectionType: UUID.self, menu: contextMenuContent, primaryAction: openProfiles)
-            .onKeyPress(.return, action: renameOnReturn)
+            .onKeyPress(.return, phases: .down, action: renameOnReturn)
         }
         .frame(minWidth: 460, minHeight: 260)
         .toolbar {
@@ -328,10 +328,12 @@ struct ContentView: View {
     }
 
     /// Return renames the selected profile, like Finder. Handled by the
-    /// list rather than the menu so it never fires in other windows.
-    private func renameOnReturn() -> KeyPress.Result {
+    /// list rather than the menu so it never fires in other windows. Only a
+    /// plain Return: ⌘Return opens and ⇧⌘Return stops through the menu.
+    private func renameOnReturn(_ press: KeyPress) -> KeyPress.Result {
         let targets = selectedProfiles
-        guard editingID == nil, targets.count == 1, !targets[0].isDefault else { return .ignored }
+        guard press.modifiers.isDisjoint(with: [.command, .shift, .option, .control]),
+              editingID == nil, targets.count == 1, !targets[0].isDefault else { return .ignored }
         beginRename(targets[0].id)
         return .handled
     }

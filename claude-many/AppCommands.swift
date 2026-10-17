@@ -211,7 +211,10 @@ final class ProfilesMenuBridge: NSObject, NSMenuDelegate {
             if let title, menuItem.title != title { menuItem.title = title }
             menuItem.isEnabled = isEnabled
         }
-        reportMissingItems(Set(ProfilesMenu.Item.allCases).subtracting(found), in: menu)
+        // A menu with none of its items yet is one SwiftUI has not filled.
+        if !found.isEmpty {
+            reportMissingItems(Set(ProfilesMenu.Item.allCases).subtracting(found))
+        }
     }
 
     private func match(_ menuItem: NSMenuItem) -> ProfilesMenu.Item? {
@@ -238,9 +241,8 @@ final class ProfilesMenuBridge: NSObject, NSMenuDelegate {
     }
 
     /// A renamed or removed command would silently stay enabled; say so once.
-    /// An empty menu is one SwiftUI has not filled yet.
-    private func reportMissingItems(_ missing: Set<ProfilesMenu.Item>, in menu: NSMenu) {
-        guard !missing.isEmpty, !menu.items.isEmpty, !reportedMissingItems else { return }
+    private func reportMissingItems(_ missing: Set<ProfilesMenu.Item>) {
+        guard !missing.isEmpty, !reportedMissingItems else { return }
         reportedMissingItems = true
         Self.logger.error("Profiles menu items not found: \(String(describing: missing), privacy: .public)")
     }

@@ -447,8 +447,9 @@ final class ProfileManager {
         return dataRootDirectory.appendingPathComponent(candidate, isDirectory: true)
     }
 
-    /// Folder names stay far below APFS's 255-byte limit, with room for a
-    /// "-N" suffix.
+    /// Folder names stay below the 255-byte file name limit even when the
+    /// file system stores them decomposed (at most about three times
+    /// longer) and a "-N" suffix is added.
     static let maximumSlugLength = 64
 
     /// "My Work (2)" -> "my-work-2". Lowercase, non-alphanumerics become

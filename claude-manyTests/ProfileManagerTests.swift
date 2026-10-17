@@ -420,6 +420,45 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(corrupt.profiles, [])
     }
 
+    func testUnreadableProfileListSurvivesTheNextSave() throws {
+        let original = Data("garbage".utf8)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        try original.write(to: manager.store.fileURL)
+
+        manager.load()
+        try manager.addProfile(named: "Work")
+
+        XCTAssertEqual(try unreadableListCopies(), [original],
+                       "the only copy of the old list must not be overwritten by the next save")
+        XCTAssertEqual(try manager.store.load().map(\.label), ["Work"])
+    }
+
+    func testReadableProfilesLoadWhenOtherEntriesAreUnreadable() throws {
+        let readable = ClaudeProfile(label: "Work", dataDirectory: tempDir.appendingPathComponent("Profiles/work", isDirectory: true))
+        try manager.store.save([readable])
+        // An entry from a newer version, e.g. after a downgrade, must not take the rest down with it.
+        var entries = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: manager.store.fileURL)) as? [Any])
+        entries.append(["id": UUID().uuidString, "label": "Future", "app": "future-app", "dataDirectory": "/tmp/future"])
+        let original = try JSONSerialization.data(withJSONObject: entries)
+        try original.write(to: manager.store.fileURL)
+
+        manager.load()
+
+        XCTAssertEqual(manager.profiles, [readable])
+        XCTAssertNotNil(manager.lastError)
+        XCTAssertEqual(try unreadableListCopies(), [original])
+        XCTAssertEqual(try manager.store.load(), [readable])
+    }
+
+    /// Contents of the set-aside copies next to profiles.json.
+    private func unreadableListCopies() throws -> [Data] {
+        let directory = manager.store.fileURL.deletingLastPathComponent()
+        return try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .filter { $0.hasPrefix("profiles-unreadable-") }
+            .sorted()
+            .map { try Data(contentsOf: directory.appendingPathComponent($0)) }
+    }
+
     // MARK: Untitled naming / reorder / restore
 
     func testAddUntitledProfileNumbersPlaceholders() throws {

@@ -113,13 +113,46 @@ final class ProfileManager {
     // MARK: Load / persist
 
     func load() {
+        defer { refreshRunningProcesses() }
+
+        let contents: ProfileStore.Contents
         do {
-            profiles = try store.load()
+            contents = try store.loadReadable()
         } catch {
-            lastError = "Could not load profiles: \(error.localizedDescription)"
+            profiles = []
+            setAsideUnreadableList(problem: "Your profile list could not be read.")
             return
         }
-        refreshRunningProcesses()
+
+        profiles = contents.profiles
+        guard contents.unreadableCount > 0 else { return }
+
+        let count = contents.unreadableCount
+        let problem = count == 1
+            ? "1 profile could not be read and was left out."
+            : "\(count) profiles could not be read and were left out."
+        guard setAsideUnreadableList(problem: problem) != nil else { return }
+
+        // Start the new file with everything that was readable.
+        do {
+            try persist()
+        } catch {
+            report(error)
+        }
+    }
+
+    /// The next save would replace a list that still holds unreadable
+    /// entries, so move it aside first and say where it went.
+    @discardableResult
+    private func setAsideUnreadableList(problem: String) -> URL? {
+        do {
+            let copy = try store.setAsideUnreadableFile()
+            lastError = "\(problem) The original was kept as “\(copy.lastPathComponent)” next to profiles.json. Profile data folders were not changed."
+            return copy
+        } catch {
+            lastError = "\(problem) It could not be set aside (\(error.localizedDescription)), so the next change will replace it."
+            return nil
+        }
     }
 
     /// Reconcile external starts as well as instances left over from an app relaunch.

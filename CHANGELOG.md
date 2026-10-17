@@ -8,6 +8,9 @@
 - File → New ChatGPT Profile (⌥⌘N); the toolbar **+** offers both apps.
   Untitled Claude profiles are now named "New Claude Profile".
 - Settings lists separate locations for Claude.app and ChatGPT.app.
+- An unreadable `profiles.json` is kept as `profiles-unreadable-<date>.json`
+  instead of being overwritten by the next change. Readable entries still
+  load when others cannot be decoded.
 
 ## 1.0.0
 

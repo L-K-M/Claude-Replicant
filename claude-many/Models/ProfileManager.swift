@@ -246,7 +246,7 @@ final class ProfileManager {
         let others = profiles.filter { $0.id != profile.id }.map(\.dataDirectory.path)
         let directory = makeUniqueDataDirectory(for: profile.label, avoiding: Set(others))
         guard directory.lastPathComponent != current.lastPathComponent else { return }
-        profiles[index] = ClaudeProfile(id: profile.id, label: profile.label, app: profile.app, dataDirectory: directory)
+        profiles[index] = profile.withDataDirectory(directory)
     }
 
     /// Removes the profile from the list (stopping it first if running).
@@ -291,7 +291,7 @@ final class ProfileManager {
               current.dataDirectory != restored.dataDirectory,
               FileManager.default.fileExists(atPath: current.dataDirectory.path),
               !FileManager.default.fileExists(atPath: restored.dataDirectory.path) else { return restored }
-        return ClaudeProfile(id: restored.id, label: restored.label, app: restored.app, dataDirectory: current.dataDirectory)
+        return restored.withDataDirectory(current.dataDirectory)
     }
 
     /// A restored folder name may have been taken over since: another
@@ -314,7 +314,7 @@ final class ProfileManager {
             let occupied = claimed.union(result.map(\.dataDirectory.path))
             let directory = makeUniqueDataDirectory(for: profile.label, avoiding: occupied)
             claimed.insert(directory.path)
-            result[index] = ClaudeProfile(id: profile.id, label: profile.label, app: profile.app, dataDirectory: directory)
+            result[index] = profile.withDataDirectory(directory)
         }
         return result
     }

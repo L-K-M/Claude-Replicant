@@ -86,7 +86,8 @@ struct MenuBarContent: View {
     /// dropped first, so it cannot open the window for an action that
     /// succeeded.
     private func perform(_ action: () -> Void) {
-        let windowShown = NSApp.windows.contains { $0.isVisible && $0.canBecomeMain }
+        // The main window, even minimized; Settings cannot show the alert.
+        let windowShown = ProfileCommandCenter.shared.context.hasWindow
         if !windowShown { manager.clearError() }
         let earlierError = manager.lastError
         action()

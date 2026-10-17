@@ -179,7 +179,6 @@ struct ContentView: View {
         }
         context.startAll = manager.startAll
         context.stopAll = manager.stopAll
-        context.openProfilesFolder = openProfilesFolder
         return context
     }
 
@@ -292,16 +291,6 @@ struct ContentView: View {
             .filter { ids.contains($0.id) }
             .map(\.dataDirectory)
         MacPlatform.revealInFinder(urls)
-    }
-
-    private func openProfilesFolder() {
-        // The root is created lazily; make it exist so Finder has something
-        // real to show.
-        try? FileManager.default.createDirectory(
-            at: ProfileManager.profilesRootDirectory,
-            withIntermediateDirectories: true
-        )
-        MacPlatform.revealInFinder(ProfileManager.profilesRootDirectory)
     }
 
     private func locateBundle(for app: ManagedApp) {

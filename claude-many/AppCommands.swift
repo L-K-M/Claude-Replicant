@@ -33,7 +33,6 @@ struct ProfileCommandContext {
     var copyPathSelected: () -> Void = {}
     var startAll: () -> Void = {}
     var stopAll: () -> Void = {}
-    var openProfilesFolder: () -> Void = {}
 }
 
 struct ProfileCommandContextKey: FocusedValueKey {
@@ -76,10 +75,9 @@ struct ProfileCommands: Commands {
     // own — every closure is a no-op when it does not apply.
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            NewProfileButton(app: .claude, context: context)
-                .keyboardShortcut("n")
-            NewProfileButton(app: .chatGPT, context: context)
-                .keyboardShortcut("n", modifiers: [.command, .option])
+            NewProfileButton(app: .claude, context: context, shortcut: KeyboardShortcut("n"))
+            NewProfileButton(app: .chatGPT, context: context,
+                             shortcut: KeyboardShortcut("n", modifiers: [.command, .option]))
         }
 
         CommandMenu("Profiles") {
@@ -104,7 +102,8 @@ struct ProfileCommands: Commands {
 
             Divider()
 
-            Button("Open Profiles Folder in Finder") { context.openProfilesFolder() }
+            // Needs no window, so it works from the menu bar item too.
+            Button("Open Profiles Folder in Finder") { MacPlatform.revealProfilesFolder() }
         }
 
         CommandGroup(replacing: .help) {
@@ -120,6 +119,7 @@ struct ProfileCommands: Commands {
 private struct NewProfileButton: View {
     let app: ManagedApp
     let context: ProfileCommandContext
+    let shortcut: KeyboardShortcut
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -132,6 +132,7 @@ private struct NewProfileButton: View {
             NSApp.activate()
             openWindow(id: AppBranding.mainWindowID)
         }
+        .keyboardShortcut(shortcut)
     }
 }
 

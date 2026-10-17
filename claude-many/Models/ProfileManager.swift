@@ -47,6 +47,18 @@ final class ProfileManager {
     let dataRootDirectory: URL
     private let launcher: any ClaudeLauncher
     private let defaults: UserDefaults
+    private let trash: FileTrash
+    /// Unused folders under `dataRootDirectory`, as of the last change to
+    /// the list; see `unlistedData`.
+    private var scannedUnlistedData: [UnlistedProfileData] = []
+    /// The last scan left out folders untracked instances run in; scans
+    /// repeat with discovery until they are free.
+    @ObservationIgnored private var unlistedDataHeldByInstances = false
+    /// Folders the list on disk names, as comparable paths. Never offered as
+    /// unlisted, even when a failed save left `profiles` without them. Nil
+    /// while the file names folders that could not be decoded: then no
+    /// folder is offered until a save succeeds.
+    @ObservationIgnored private var savedDataDirectories: Set<String>? = []
     private var handles: [UUID: ClaudeProcessHandle] = [:]
     /// Pending force-kill timers, one per stopped profile.
     private var forceKillTasks: [UUID: Task<Void, Never>] = [:]
@@ -87,13 +99,15 @@ final class ProfileManager {
         claudeBundleURL: URL? = nil,
         chatGPTBundleURL: URL? = nil,
         defaults: UserDefaults? = nil,
-        dataRootDirectory: URL = ProfileManager.profilesRootDirectory
+        dataRootDirectory: URL = ProfileManager.profilesRootDirectory,
+        trash: FileTrash = .system
     ) {
         self.store = store
             ?? ProfileStore(fileURL: Self.appSupportDirectory.appendingPathComponent("profiles.json"))
         self.launcher = launcher
         self.defaults = defaults ?? .standard
         self.dataRootDirectory = dataRootDirectory
+        self.trash = trash
 
         var bundleURLs: [ManagedApp: URL] = [:]
         for app in ManagedApp.allCases {
@@ -117,9 +131,13 @@ final class ProfileManager {
     // MARK: Load / persist
 
     func load() {
-        defer { refreshRunningProcesses() }
+        defer {
+            refreshRunningProcesses()
+            rescanUnlistedData()
+        }
 
         let contents: ProfileStore.Contents
+        savedDataDirectories = []
         do {
             contents = try store.loadReadable()
             unopenedProfileList = nil
@@ -141,6 +159,7 @@ final class ProfileManager {
         }
 
         profiles = contents.profiles
+        savedDataDirectories = Self.comparablePaths(of: profiles)
         guard contents.unreadableCount > 0 else { return }
 
         let count = contents.unreadableCount
@@ -153,6 +172,9 @@ final class ProfileManager {
         do {
             try persist()
         } catch {
+            // The old file stays, naming folders of entries that could not
+            // be decoded. (Needs the save, not the copy, to fail: untested.)
+            savedDataDirectories = nil
             lastError = [lastError, "Saving the readable profiles failed: \(error.localizedDescription)"]
                 .compactMap { $0 }
                 .joined(separator: " ")
@@ -198,6 +220,7 @@ final class ProfileManager {
                 attach(handle: handle, to: id)
             }
         }
+        if unlistedDataHeldByInstances { rescanUnlistedData() }
     }
 
     /// The listed entry whose storage a discovered instance uses, if any.
@@ -247,7 +270,13 @@ final class ProfileManager {
         if let unopenedProfileList {
             throw ProfileManagerError.profileListUnavailable(reason: unopenedProfileList)
         }
-        try store.save(profiles)
+        try save(profiles)
+    }
+
+    /// Writes `list` and remembers which folders the file now names.
+    private func save(_ list: [ClaudeProfile]) throws {
+        try store.save(list)
+        savedDataDirectories = Self.comparablePaths(of: list)
     }
 
     /// Changes are refused while the list on disk could not be opened or
@@ -312,6 +341,7 @@ final class ProfileManager {
         profiles.removeAll { $0.id == id }
         releaseUnlistedBuiltIns()
         try persist()
+        rescanUnlistedData()
     }
 
     /// Drag-to-reorder within the user-managed profiles (the built-in Default
@@ -347,7 +377,156 @@ final class ProfileManager {
         } catch {
             lastError = "Could not save profiles: \(error.localizedDescription)"
         }
+        rescanUnlistedData()
         return true
+    }
+
+    // MARK: Unlisted data
+
+    /// Folders under the profiles root that no listed profile uses, newest
+    /// first. A folder an instance still runs in (a deleted profile still
+    /// quitting) is left out until it exits.
+    var unlistedData: [UnlistedProfileData] {
+        let inUse = Set(handles.values.compactMap(\.dataDirectory).map(Self.comparablePath))
+        return scannedUnlistedData.filter { !inUse.contains(Self.comparablePath($0.directory)) }
+    }
+
+    /// Lists an unlisted folder again as a profile that uses it as is, so
+    /// that account's sign-in and history come back.
+    @discardableResult
+    func restoreUnlistedData(at directory: URL) throws -> ClaudeProfile {
+        try ensureProfileListWritable()
+        guard !instanceRuns(in: directory) else {
+            throw ProfileManagerError.dataInUse(name: directory.lastPathComponent)
+        }
+        let data = try currentUnlistedData(at: directory)
+        let profile = ClaudeProfile(label: data.suggestedLabel, app: data.app, dataDirectory: data.directory)
+        // Saved first: a failed save must leave the folder listed as unused.
+        try save(profiles + [profile])
+        profiles.append(profile)
+        rescanUnlistedData()
+        return profile
+    }
+
+    /// Moves an unlisted folder to the Trash and returns where it went, for
+    /// Undo. Refused while any instance runs in it, listed or not.
+    func trashUnlistedData(at directory: URL) throws -> URL {
+        try ensureProfileListWritable()
+        guard !instanceRuns(in: directory) else {
+            throw ProfileManagerError.dataInUse(name: directory.lastPathComponent)
+        }
+        let data = try currentUnlistedData(at: directory)
+        defer { rescanUnlistedData() }
+        return try trash.moveToTrash(data.directory)
+    }
+
+    /// Moves a folder `trashUnlistedData(at:)` trashed back, for Undo.
+    func putBackTrashedData(from trashed: URL, to original: URL) throws {
+        defer { rescanUnlistedData() }
+        try FileManager.default.moveItem(at: trashed, to: original)
+    }
+
+    /// The listed entry for `directory`. An exact match wins, so on a
+    /// case-sensitive volume `work` never stands in for `WORK`.
+    private func currentUnlistedData(at directory: URL) throws -> UnlistedProfileData {
+        rescanUnlistedData()
+        let candidates = unlistedData
+        let exactPath = directory.standardizedFileURL.path
+        let path = Self.comparablePath(directory)
+        guard let data = candidates.first(where: { $0.directory.standardizedFileURL.path == exactPath })
+                ?? candidates.first(where: { Self.comparablePath($0.directory) == path }) else {
+            throw ProfileManagerError.unlistedDataUnavailable
+        }
+        return data
+    }
+
+    private func instanceRuns(in directory: URL) -> Bool {
+        instanceDataDirectories().contains(Self.comparablePath(directory))
+    }
+
+    /// Where any instance of either app runs, tracked or not, as comparable
+    /// paths.
+    private func instanceDataDirectories() -> Set<String> {
+        var directories: Set<String> = []
+        for app in ManagedApp.allCases {
+            let executable = bundleURL(for: app).appendingPathComponent(app.executablePath)
+            for handle in launcher.runningHandles(app: app, executable: executable) {
+                if let directory = handle.dataDirectory { directories.insert(Self.comparablePath(directory)) }
+            }
+        }
+        return directories
+    }
+
+    /// Lists the root's visible subfolders that no profile uses and no
+    /// running instance holds (one a deleted profile left running before
+    /// a relaunch is never adopted). Nothing while the list cannot be
+    /// opened: which folders it names is unknown. Never creates the root.
+    private func rescanUnlistedData() {
+        unlistedDataHeldByInstances = false
+        guard unopenedProfileList == nil else {
+            scannedUnlistedData = []
+            return
+        }
+
+        let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey, .contentModificationDateKey]
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: dataRootDirectory, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
+        ) else {
+            scannedUnlistedData = []
+            return
+        }
+
+        // Tracked instances are left to `unlistedData`, so a deleted
+        // profile's folder shows up as soon as its instance exits.
+        guard let savedDataDirectories else {
+            scannedUnlistedData = []
+            return
+        }
+        var used = Self.comparablePaths(of: profiles).union(savedDataDirectories)
+        var heldByInstances: Set<String> = []
+        if !entries.isEmpty {
+            let tracked = Set(handles.values.compactMap(\.dataDirectory).map(Self.comparablePath))
+            heldByInstances = instanceDataDirectories().subtracting(tracked).subtracting(used)
+            used.formUnion(heldByInstances)
+        }
+        scannedUnlistedData = entries.compactMap { folder -> UnlistedProfileData? in
+            guard let values = try? folder.resourceValues(forKeys: Set(keys)),
+                  values.isDirectory == true, values.isSymbolicLink != true,
+                  !used.contains(Self.comparablePath(folder)) else { return nil }
+            return UnlistedProfileData(directory: folder, app: Self.app(usingDataIn: folder),
+                                       modified: values.contentModificationDate)
+        }
+        .sorted { first, second in
+            // Newest first; the name keeps equal dates from trading places.
+            let firstModified = first.modified ?? .distantPast
+            let secondModified = second.modified ?? .distantPast
+            guard firstModified == secondModified else { return firstModified > secondModified }
+            return first.directory.lastPathComponent < second.directory.lastPathComponent
+        }
+        unlistedDataHeldByInstances = entries.contains { heldByInstances.contains(Self.comparablePath($0)) }
+    }
+
+    /// ChatGPT profiles get a `.codex` folder on first start, Claude ones
+    /// `.claude`; a folder with neither is taken for Claude.
+    private static func app(usingDataIn folder: URL) -> ManagedApp {
+        let chatGPTConfiguration = ClaudeLaunchConfiguration(app: .chatGPT, dataDirectory: folder).codeConfigurationDirectory
+        guard let chatGPTConfiguration,
+              FileManager.default.fileExists(atPath: chatGPTConfiguration.path) else { return .claude }
+        return .chatGPT
+    }
+
+    private static func comparablePaths(of profiles: [ClaudeProfile]) -> Set<String> {
+        Set(profiles.map { comparablePath($0.dataDirectory) })
+    }
+
+    /// Paths compared so that one folder never counts as two: symlinks
+    /// resolved, Unicode normalized, and case folded, as on the default
+    /// case-insensitive volume. A folder that only differs in case is
+    /// treated as in use, which can hide one but never offers a used one.
+    private static func comparablePath(_ url: URL) -> String {
+        url.standardizedFileURL.resolvingSymlinksInPath().path
+            .precomposedStringWithCanonicalMapping
+            .lowercased()
     }
 
     // MARK: Start / stop
@@ -562,6 +741,8 @@ enum ProfileManagerError: LocalizedError, Equatable {
     case stopInProgress
     case builtInProfile
     case profileListUnavailable(reason: String)
+    case unlistedDataUnavailable
+    case dataInUse(name: String)
 
     var errorDescription: String? {
         switch self {
@@ -579,6 +760,10 @@ enum ProfileManagerError: LocalizedError, Equatable {
             return "Default entries are built in and cannot be renamed or removed."
         case .profileListUnavailable(let reason):
             return "Your profile list was left as it is (\(reason)). Changes are not saved; fix the file, then quit and reopen Claude Replicant."
+        case .unlistedDataUnavailable:
+            return "That folder is no longer unlisted: a profile uses it, or it was moved."
+        case .dataInUse(let name):
+            return "“\(name)” is in use by a running instance. Quit that instance first."
         }
     }
 }

@@ -11,6 +11,10 @@
 - An unreadable `profiles.json` is kept as `profiles-unreadable-<date>.json`
   instead of being overwritten by the next change. Readable entries still
   load when others cannot be decoded.
+- Unlisted Data: folders no profile uses, such as a deleted profile's, are
+  listed below the profiles. Restore one to use that account again, or
+  move it to the Trash (undoable). A folder an instance still runs in is
+  never offered.
 
 ## 1.0.0
 

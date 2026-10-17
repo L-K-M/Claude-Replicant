@@ -156,8 +156,10 @@ instances are running, and quitting the window quits the app; running Claude
 instances keep running and are adopted on the next launch.
 
 Deleting a profile only removes it from the list — the data directory stays
-on disk so nothing is lost (remove it manually if you truly want to delete
-the account data). Settings (**⌘,**) shows the Claude.app and ChatGPT.app
+on disk so nothing is lost. Folders no profile uses appear under **Unlisted
+Data** at the bottom of the list: **Restore** lists one again with its
+sign-in intact, and **Move to Trash…** removes it (undoable with **⌘Z**).
+This also recovers every profile if `profiles.json` is ever lost. Settings (**⌘,**) shows the Claude.app and ChatGPT.app
 locations with a **Choose…** picker if either is not installed in
 `/Applications`; the chosen paths persist across launches.
 

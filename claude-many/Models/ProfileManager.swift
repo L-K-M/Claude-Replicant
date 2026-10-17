@@ -115,11 +115,34 @@ final class ProfileManager {
     func load() {
         do {
             profiles = try store.load()
+            repairOverlongDataDirectories()
         } catch {
             lastError = "Could not load profiles: \(error.localizedDescription)"
             return
         }
         refreshRunningProcesses()
+    }
+
+    /// Profiles saved before folder names were capped can hold a name the
+    /// file system refuses. Such a folder can never have been created, so
+    /// give the profile a fresh, capped one.
+    private func repairOverlongDataDirectories() {
+        var repaired = false
+        for index in profiles.indices {
+            let directory = profiles[index].dataDirectory
+            guard directory.lastPathComponent.utf8.count > Self.maximumSlugLength,
+                  directory.deletingLastPathComponent().standardizedFileURL.path == dataRootDirectory.standardizedFileURL.path,
+                  !FileManager.default.fileExists(atPath: directory.path),
+                  let replacement = try? makeUniqueDataDirectory(for: profiles[index].label) else { continue }
+            profiles[index] = profiles[index].withDataDirectory(replacement)
+            repaired = true
+        }
+        guard repaired else { return }
+        do {
+            try persist()
+        } catch {
+            report(error)
+        }
     }
 
     /// Reconcile external starts as well as instances left over from an app relaunch.

@@ -5,7 +5,7 @@ struct ClaudeProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
     let id: UUID
     var label: String
     let app: ManagedApp
-    let location: ClaudeInstanceLocation
+    private(set) var location: ClaudeInstanceLocation
 
     static let standard = builtIn(for: .claude)
 
@@ -38,6 +38,13 @@ struct ClaudeProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
         self.label = label
         self.app = app
         location = .isolated(dataDirectory: dataDirectory)
+    }
+
+    /// The same profile, everything else unchanged, with its data in `directory`.
+    func withDataDirectory(_ directory: URL) -> ClaudeProfile {
+        var profile = self
+        profile.location = .isolated(dataDirectory: directory)
+        return profile
     }
 
     private init(id: UUID, label: String, app: ManagedApp, location: ClaudeInstanceLocation) {

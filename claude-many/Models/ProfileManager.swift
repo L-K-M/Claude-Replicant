@@ -380,11 +380,15 @@ final class ProfileManager {
     @discardableResult
     func restoreUnlistedData(at directory: URL) throws -> ClaudeProfile {
         try ensureProfileListWritable()
+        guard !instanceRuns(in: directory) else {
+            throw ProfileManagerError.dataInUse(name: directory.lastPathComponent)
+        }
         let data = try currentUnlistedData(at: directory)
         let profile = ClaudeProfile(label: data.suggestedLabel, app: data.app, dataDirectory: data.directory)
+        // Saved first: a failed save must leave the folder listed as unused.
+        try store.save(profiles + [profile])
         profiles.append(profile)
         rescanUnlistedData()
-        try persist()
         return profile
     }
 

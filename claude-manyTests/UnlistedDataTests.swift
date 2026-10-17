@@ -181,6 +181,30 @@ final class UnlistedDataTests: XCTestCase {
         XCTAssertEqual(manager.unlistedData.first?.suggestedLabel, "Restored Profile")
     }
 
+    func testRestoringAFolderAnInstanceStartedInSaysItIsInUse() throws {
+        let folder = try makeFolder("work")
+        manager.load()
+        // Started outside Claude Replicant after the list was scanned.
+        launcher.runningHandlesToReturn = [FakeClaudeProcess(dataDirectory: folder)]
+
+        XCTAssertThrowsError(try manager.restoreUnlistedData(at: folder)) {
+            XCTAssertEqual($0 as? ProfileManagerError, .dataInUse(name: "work"))
+        }
+    }
+
+    func testAFailedSaveLeavesTheFolderUnlisted() throws {
+        let folder = try makeFolder("work")
+        manager.load()
+        // The list's folder becomes read-only, so saving fails.
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path) }
+
+        XCTAssertThrowsError(try manager.restoreUnlistedData(at: folder))
+
+        XCTAssertEqual(manager.profiles, [])
+        XCTAssertEqual(manager.unlistedData.map(\.directory.lastPathComponent), ["work"])
+    }
+
     func testOnlyUnlistedFoldersCanBeRestored() throws {
         let work = try manager.addProfile(named: "Work")
         try manager.start(id: work.id)

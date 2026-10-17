@@ -46,6 +46,10 @@ final class ProfileManager {
     private var handles: [UUID: ClaudeProcessHandle] = [:]
     /// Pending force-kill timers, one per stopped profile.
     private var forceKillTasks: [UUID: Task<Void, Never>] = [:]
+    /// Every data folder loaded or handed out this session. Undo can bring
+    /// back any of them, so a folder name a profile gave up (or a deleted
+    /// profile left behind) is never given to another profile.
+    @ObservationIgnored private var claimedDataDirectories: Set<String> = []
     private static let reconciliationInterval: Duration = .seconds(2)
     private var monitorOwner: UUID?
 
@@ -115,6 +119,7 @@ final class ProfileManager {
     func load() {
         do {
             profiles = try store.load()
+            claimedDataDirectories.formUnion(profiles.map(\.dataDirectory.path))
         } catch {
             lastError = "Could not load profiles: \(error.localizedDescription)"
             return
@@ -196,7 +201,7 @@ final class ProfileManager {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ProfileManagerError.invalidLabel }
 
-        let dataDirectory = makeUniqueDataDirectory(for: trimmed, avoiding: Set(profiles.map(\.dataDirectory.path)))
+        let dataDirectory = claimUniqueDataDirectory(for: trimmed)
         let profile = ClaudeProfile(label: trimmed, app: app, dataDirectory: dataDirectory)
         profiles.append(profile)
         try persist()
@@ -241,12 +246,11 @@ final class ProfileManager {
               current.deletingLastPathComponent().standardizedFileURL.path == dataRootDirectory.standardizedFileURL.path,
               !FileManager.default.fileExists(atPath: current.path) else { return }
 
+        // "work-2" already fits "Work" when "work" was taken.
         let base = Self.slug(for: profile.label)
-        guard current.lastPathComponent != base else { return }
-        let others = profiles.filter { $0.id != profile.id }.map(\.dataDirectory.path)
-        let directory = makeUniqueDataDirectory(for: profile.label, avoiding: Set(others))
-        guard directory.lastPathComponent != current.lastPathComponent else { return }
-        profiles[index] = profile.withDataDirectory(directory)
+        let name = current.lastPathComponent
+        guard name != base, !(name.hasPrefix(base + "-") && Int(name.dropFirst(base.count + 1)) != nil) else { return }
+        profiles[index] = profile.withDataDirectory(claimUniqueDataDirectory(for: profile.label))
     }
 
     /// Removes the profile from the list (stopping it first if running).
@@ -275,7 +279,7 @@ final class ProfileManager {
         for id in profiles.map(\.id) where !snapshotIDs.contains(id) {
             stop(id: id)
         }
-        profiles = withUniqueDataDirectories(snapshot.map(keepingDataDirectoryInUse))
+        profiles = snapshot.map(keepingDataDirectoryInUse)
         releaseUnlistedBuiltIns()
         do {
             try persist()
@@ -293,31 +297,6 @@ final class ProfileManager {
               handles[restored.id] != nil || FileManager.default.fileExists(atPath: current.dataDirectory.path)
         else { return restored }
         return restored.withDataDirectory(current.dataDirectory)
-    }
-
-    /// A restored folder name may have been taken over since: another
-    /// profile renamed into the freed name and started there. The profile
-    /// that holds the folder now keeps it; the other gets a fresh name,
-    /// which is safe because its own folder was never created.
-    private func withUniqueDataDirectories(_ restored: [ClaudeProfile]) -> [ClaudeProfile] {
-        let currentFolders = Dictionary(profiles.map { ($0.id, $0.dataDirectory.path) }) { first, _ in first }
-        let holdsFolderNow = { (profile: ClaudeProfile) in currentFolders[profile.id] == profile.dataDirectory.path }
-        // Current holders claim first; the rest keep their snapshot order.
-        let order = restored.indices.filter { holdsFolderNow(restored[$0]) }
-            + restored.indices.filter { !holdsFolderNow(restored[$0]) }
-
-        var result = restored
-        var claimed: Set<String> = []
-        for index in order {
-            let profile = result[index]
-            if claimed.insert(profile.dataDirectory.path).inserted { continue }
-
-            let occupied = claimed.union(result.map(\.dataDirectory.path))
-            let directory = makeUniqueDataDirectory(for: profile.label, avoiding: occupied)
-            claimed.insert(directory.path)
-            result[index] = profile.withDataDirectory(directory)
-        }
-        return result
     }
 
     // MARK: Start / stop
@@ -486,9 +465,10 @@ final class ProfileManager {
 
     // MARK: Helpers
 
-    /// Builds a unique, filesystem-friendly directory name for a new profile.
-    /// `occupied` holds the data folder paths other profiles already use.
-    private func makeUniqueDataDirectory(for label: String, avoiding occupied: Set<String>) -> URL {
+    /// A folder name for `label` that no profile has used this session and
+    /// that does not exist on disk, e.g. "work" or "work-2".
+    private func claimUniqueDataDirectory(for label: String) -> URL {
+        let occupied = claimedDataDirectories.union(profiles.map(\.dataDirectory.path))
         let base = Self.slug(for: label)
         var candidate = base
         var counter = 2
@@ -500,7 +480,9 @@ final class ProfileManager {
             candidate = "\(base)-\(counter)"
             counter += 1
         }
-        return dataRootDirectory.appendingPathComponent(candidate, isDirectory: true)
+        let directory = dataRootDirectory.appendingPathComponent(candidate, isDirectory: true)
+        claimedDataDirectories.insert(directory.path)
+        return directory
     }
 
     /// "My Work (2)" -> "my-work-2". Lowercase, non-alphanumerics become

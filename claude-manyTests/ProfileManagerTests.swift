@@ -241,6 +241,23 @@ final class ProfileManagerTests: XCTestCase {
                        "undo must not move a profile into another profile's leftover data")
     }
 
+    func testUndoNeverPointsAProfileAtAnotherProfilesLeftoverFolder() throws {
+        try makeBundle()
+        let first = try manager.addUntitledProfile(for: .claude)
+        let beforeRename = manager.profiles
+        try manager.renameProfile(id: first.id, to: "Work")
+        // A second untitled profile must not get the folder name the first one gave up.
+        let second = try manager.addUntitledProfile(for: .claude)
+        try manager.start(id: second.id)
+        manager.stop(id: second.id)
+        try manager.removeProfile(id: second.id)
+
+        manager.restoreProfiles(beforeRename)
+
+        XCTAssertNotEqual(manager.profiles.first?.dataDirectory, second.dataDirectory,
+                          "undo must never bind a profile to another account's data")
+    }
+
     func testRenameNeverRepointsARunningProfile() throws {
         try makeBundle()
         let profile = try manager.addProfile(named: "Work")

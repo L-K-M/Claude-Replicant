@@ -11,8 +11,11 @@ protocol ClaudeProcessHandle: AnyObject, Sendable {
     var dataDirectory: URL? { get }
     /// Called (on an arbitrary queue) when the process exits on its own.
     var terminationHandler: (@Sendable () -> Void)? { get set }
-    /// Ask the process to exit cleanly (SIGTERM).
+    /// Ask the app to quit the way ⌘Q does, so it can save its state. A
+    /// process that is not a running app gets SIGTERM instead.
     func terminate()
+    /// SIGTERM, for an app that missed or ignored the quit request.
+    func sendTerminationSignal()
     /// Kill the process outright (SIGKILL).
     func terminateForcefully()
 }
@@ -122,14 +125,25 @@ struct RealClaudeLauncher: ClaudeLauncher {
     }
 
     /// The kernel-reported start time of a PID, or nil if no such process
-    /// exists. Together with the PID it uniquely identifies a process instance.
+    /// exists or it has exited and awaits reaping (a zombie). Together with
+    /// the PID it uniquely identifies a process instance.
     static func processStartTime(for pid: Int32) -> timeval? {
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
         var size = MemoryLayout<kinfo_proc>.size
         var proc = kinfo_proc()
         guard sysctl(&mib, u_int(mib.count), &proc, &size, nil, 0) == 0,
-              size > 0 else { return nil }
+              size > 0,
+              Int32(proc.kp_proc.p_stat) != SZOMB else { return nil }
         return proc.kp_proc.p_un.__p_starttime
+    }
+
+    /// Sends the quit Apple event that ⌘Q sends. False when the process is
+    /// not a running app (no bundle, such as a script) or the event could
+    /// not be sent.
+    static func requestQuit(of pid: Int32) -> Bool {
+        guard let app = NSRunningApplication(processIdentifier: pid),
+              app.bundleIdentifier != nil else { return false }
+        return app.terminate()
     }
 
     /// Reads argv as null-terminated entries, preserving spaces in profile paths.
@@ -179,11 +193,20 @@ final class RealClaudeProcess: ClaudeProcessHandle, @unchecked Sendable {
         }
     }
 
+    // An exited child is reaped and its PID may be reused: never signal it.
     func terminate() {
-        process.terminate() // SIGTERM; Electron apps shut down gracefully
+        guard process.isRunning else { return }
+        if RealClaudeLauncher.requestQuit(of: process.processIdentifier) { return }
+        sendTerminationSignal()
+    }
+
+    func sendTerminationSignal() {
+        guard process.isRunning else { return }
+        kill(process.processIdentifier, SIGTERM)
     }
 
     func terminateForcefully() {
+        guard process.isRunning else { return }
         kill(process.processIdentifier, SIGKILL)
     }
 }
@@ -236,6 +259,12 @@ final class AttachedClaudeProcess: ClaudeProcessHandle, @unchecked Sendable {
     }
 
     func terminate() {
+        guard sameProcessExists else { return }
+        if RealClaudeLauncher.requestQuit(of: processIdentifier) { return }
+        sendTerminationSignal()
+    }
+
+    func sendTerminationSignal() {
         guard sameProcessExists else { return }
         kill(processIdentifier, SIGTERM)
     }

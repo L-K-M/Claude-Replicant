@@ -64,7 +64,7 @@ struct ProfileRowView: View {
                     Text(state == .restarting ? "Restarting…" : "Stopping…")
                         .foregroundStyle(.secondary)
                 }
-                .help("Waiting for the previous \(profile.app.name) instance to quit")
+                .help("Waiting for this \(profile.app.name) instance to quit. Force Quit in the … menu ends it now.")
             case .stopped:
                 Button("Start") {
                     do { try manager.start(id: profile.id) }
@@ -83,6 +83,9 @@ struct ProfileRowView: View {
                         .disabled(manager.bundleStatus(for: profile.app) != .available)
                 } else if state == .restarting {
                     Button("Cancel Restart") { manager.stop(id: profile.id) }
+                }
+                if state == .stopping || state == .restarting {
+                    Button("Force Quit") { manager.forceQuit(id: profile.id) }
                 }
                 if !profile.isDefault {
                     Button("Rename…", action: requestRename)

@@ -317,6 +317,149 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertTrue(manager.isRunning(id: profile.id))
     }
 
+    // MARK: Stopping and restart
+
+    /// Runs the termination handler's hop to the main queue.
+    private func drainMainQueue() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+    }
+
+    func testStoppingIsShownUntilTheOldProcessExits() async throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        XCTAssertEqual(manager.state(of: profile.id), .running)
+
+        manager.stop(id: profile.id)
+        XCTAssertEqual(manager.state(of: profile.id), .stopping)
+        XCTAssertFalse(manager.isRunning(id: profile.id))
+
+        try XCTUnwrap(launcher.launchedHandles.first).simulateExit()
+        await drainMainQueue()
+        XCTAssertEqual(manager.state(of: profile.id), .stopped)
+    }
+
+    func testRestartStartsAgainOnceTheOldProcessExits() async throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        let first = try XCTUnwrap(launcher.launchedHandles.first)
+
+        manager.restart(id: profile.id)
+        XCTAssertTrue(first.terminationRequested)
+        XCTAssertEqual(manager.state(of: profile.id), .restarting)
+        XCTAssertEqual(launcher.launches.count, 1, "never two instances in one data folder")
+
+        first.simulateExit()
+        await drainMainQueue()
+        XCTAssertEqual(launcher.launches.count, 2)
+        XCTAssertEqual(launcher.launches.last?.location, profile.location)
+        XCTAssertEqual(manager.state(of: profile.id), .running)
+        XCTAssertNil(manager.lastError)
+    }
+
+    func testRestartKeepsTheInstanceRunningWhenTheAppCannotStartAgain() throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        let first = try XCTUnwrap(launcher.launchedHandles.first)
+        try FileManager.default.removeItem(at: tempDir.appendingPathComponent("Claude.app"))
+
+        manager.restart(id: profile.id)
+        XCTAssertFalse(first.terminationRequested, "a restart that cannot start again must not quit")
+        XCTAssertEqual(manager.state(of: profile.id), .running)
+        XCTAssertEqual(manager.lastError,
+                       ProfileManagerError.bundleMissing(
+                           app: .claude, path: tempDir.appendingPathComponent("Claude.app").path
+                       ).errorDescription)
+    }
+
+    func testRestartOfAStoppedProfileStartsIt() throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        manager.restart(id: profile.id)
+        XCTAssertEqual(launcher.launches.count, 1)
+        XCTAssertEqual(manager.state(of: profile.id), .running)
+    }
+
+    func testOpeningAStoppingProfileStartsItAfterExitInsteadOfFailing() async throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        manager.stop(id: profile.id)
+
+        manager.open(id: profile.id)
+        XCTAssertNil(manager.lastError, "no \"still shutting down\" error for a double-click")
+        XCTAssertEqual(manager.state(of: profile.id), .restarting)
+
+        try XCTUnwrap(launcher.launchedHandles.first).simulateExit()
+        await drainMainQueue()
+        XCTAssertEqual(launcher.launches.count, 2)
+        XCTAssertEqual(manager.state(of: profile.id), .running)
+    }
+
+    func testStopCancelsAPendingRestart() async throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        manager.restart(id: profile.id)
+
+        manager.stop(id: profile.id)
+        XCTAssertEqual(manager.state(of: profile.id), .stopping)
+
+        try XCTUnwrap(launcher.launchedHandles.first).simulateExit()
+        await drainMainQueue()
+        XCTAssertEqual(launcher.launches.count, 1)
+        XCTAssertEqual(manager.state(of: profile.id), .stopped)
+    }
+
+    func testStopAllCancelsQueuedRestarts() async throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        manager.restart(id: profile.id)
+        XCTAssertEqual(manager.state(of: profile.id), .restarting)
+
+        manager.stopAll()
+        XCTAssertEqual(manager.state(of: profile.id), .stopping)
+
+        try XCTUnwrap(launcher.launchedHandles.first).simulateExit()
+        await drainMainQueue()
+        XCTAssertEqual(launcher.launches.count, 1)
+        XCTAssertEqual(manager.state(of: profile.id), .stopped)
+    }
+
+    func testAQueuedStartForAnEntryNoLongerListedIsDropped() async throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        manager.restart(id: profile.id)
+        try manager.removeProfile(id: profile.id)
+
+        try XCTUnwrap(launcher.launchedHandles.first).simulateExit()
+        await drainMainQueue()
+        XCTAssertNil(manager.lastError)
+        XCTAssertEqual(launcher.launches.count, 1)
+    }
+
+    func testStartAllStartsStoppingProfilesOnceTheyExit() async throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        manager.stop(id: profile.id)
+
+        manager.startAll()
+        XCTAssertNil(manager.lastError)
+        XCTAssertTrue(manager.isRunning(id: ClaudeProfile.standard.id))
+        XCTAssertEqual(manager.state(of: profile.id), .restarting)
+
+        try XCTUnwrap(launcher.launchedHandles.first).simulateExit()
+        await drainMainQueue()
+        XCTAssertEqual(manager.state(of: profile.id), .running)
+    }
+
     // MARK: Stop
 
     func testStopMarksProfileStoppedAndTerminatesProcess() throws {

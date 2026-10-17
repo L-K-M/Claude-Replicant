@@ -149,9 +149,12 @@ app copy after installing `Claude Replicant.app`; keep the profile data.
 The profile list works like Finder: click to select (⇧/⌘ for multiples),
 double-click to open a profile, press **Return** to rename it inline, **⌘⌫**
 to delete, and drag to reorder profiles below the pinned Default entry.
-Right-click a row (or use the **Profiles** menu) for Open, Stop, Rename,
-Delete, Reveal in Finder, and Copy Data Folder Path. Add, rename, delete,
-and reorder are all undoable via **⌘Z**. The window title bar shows how many
+Right-click a row (or use the **Profiles** menu) for Open, Stop, Restart
+(**⌘R**), Rename, Delete, Reveal in Finder, and Copy Data Folder Path. A
+profile that is shutting down shows "Stopping…" until its instance has quit;
+Open or Start All during that time start it again once it has, and Stop
+cancels that. Restart is offered only while the app can start again. Add,
+rename, delete, and reorder are all undoable via **⌘Z**. The window title bar shows how many
 instances are running, and quitting the window quits the app; running Claude
 instances keep running and are adopted on the next launch.
 
@@ -231,8 +234,8 @@ a draft GitHub release. The gated live smoke test is described under
   quit while instances are still running, the next launch detects each
   profile's live instance (by its data directory), shows it as running, and
   refuses to start a second one into that data directory until the first has
-  actually exited. Starting a profile right after stopping it is likewise
-  refused until the previous instance has fully shut down.
+  actually exited. Starting a profile right after stopping it likewise
+  waits until the previous instance has fully shut down.
   Discovery is best-effort when macOS cannot read a process snapshot.
 - Claude Desktop's own settings (theme, etc.) are per profile too, since
   they are part of the userData directory.

@@ -193,8 +193,7 @@ final class ProfileManager {
 
     @discardableResult
     func addProfile(named label: String, app: ManagedApp = .claude) throws -> ClaudeProfile {
-        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw ProfileManagerError.invalidLabel }
+        guard let trimmed = ClaudeProfile.normalizedLabel(label) else { throw ProfileManagerError.invalidLabel }
 
         let dataDirectory = try makeUniqueDataDirectory(for: trimmed)
         let profile = ClaudeProfile(label: trimmed, app: app, dataDirectory: dataDirectory)
@@ -223,8 +222,7 @@ final class ProfileManager {
         guard let index = profiles.firstIndex(where: { $0.id == id }) else {
             throw ProfileManagerError.profileNotFound
         }
-        let trimmed = newLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw ProfileManagerError.invalidLabel }
+        guard let trimmed = ClaudeProfile.normalizedLabel(newLabel) else { throw ProfileManagerError.invalidLabel }
         profiles[index].label = trimmed
         try persist()
     }

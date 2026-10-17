@@ -306,7 +306,7 @@ struct ContentView: View {
     private func commitEditing() {
         guard let id = editingID else { return }
         // An emptied name keeps the old one, like Finder, instead of an error alert.
-        guard !editingDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard ClaudeProfile.normalizedLabel(editingDraft) != nil else {
             cancelEditing()
             return
         }

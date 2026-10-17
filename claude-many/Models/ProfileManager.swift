@@ -13,6 +13,10 @@ final class ProfileManager {
     private(set) var runningProfileIDs: Set<UUID> = []
     private(set) var lastError: String?
     private var bundleURLs: [ManagedApp: URL]
+    /// Why profiles.json exists but could not be opened at all (as opposed
+    /// to decoded). Saving would replace a list nobody has seen, so it is
+    /// refused until a later load succeeds.
+    @ObservationIgnored private var unopenedProfileList: String?
 
     /// Claude is always listed; ChatGPT once it has a profile.
     var listedApps: [ManagedApp] {
@@ -118,9 +122,16 @@ final class ProfileManager {
         let contents: ProfileStore.Contents
         do {
             contents = try store.loadReadable()
+            unopenedProfileList = nil
+        } catch is DecodingError {
+            profiles = []
+            unopenedProfileList = nil
+            setAsideUnreadableList(.move, problem: "Your profile list could not be read.")
+            return
         } catch {
             profiles = []
-            setAsideUnreadableList(problem: "Your profile list could not be read.")
+            unopenedProfileList = error.localizedDescription
+            lastError = ProfileManagerError.profileListUnavailable(reason: error.localizedDescription).localizedDescription
             return
         }
 
@@ -131,7 +142,7 @@ final class ProfileManager {
         let problem = count == 1
             ? "1 profile could not be read and was left out."
             : "\(count) profiles could not be read and were left out."
-        guard setAsideUnreadableList(problem: problem) != nil else { return }
+        guard setAsideUnreadableList(.copy, problem: problem) != nil else { return }
 
         // Start the new file with everything that was readable.
         do {
@@ -146,9 +157,9 @@ final class ProfileManager {
     /// The next save would replace a list that still holds unreadable
     /// entries, so move it aside first and say where it went.
     @discardableResult
-    private func setAsideUnreadableList(problem: String) -> URL? {
+    private func setAsideUnreadableList(_ method: ProfileStore.SetAside, problem: String) -> URL? {
         do {
-            let copy = try store.setAsideUnreadableFile()
+            let copy = try store.setAsideUnreadableFile(method)
             lastError = "\(problem) The original was kept at \(copy.path). Profile data folders were not changed."
             return copy
         } catch {
@@ -221,6 +232,9 @@ final class ProfileManager {
     }
 
     private func persist() throws {
+        if let unopenedProfileList {
+            throw ProfileManagerError.profileListUnavailable(reason: unopenedProfileList)
+        }
         try store.save(profiles)
     }
 
@@ -510,6 +524,7 @@ enum ProfileManagerError: LocalizedError, Equatable {
     case unsupportedBundle(app: ManagedApp, path: String)
     case stopInProgress
     case builtInProfile
+    case profileListUnavailable(reason: String)
 
     var errorDescription: String? {
         switch self {
@@ -525,6 +540,8 @@ enum ProfileManagerError: LocalizedError, Equatable {
             return "This profile's previous instance is still shutting down; try again in a moment."
         case .builtInProfile:
             return "Default entries are built in and cannot be renamed or removed."
+        case .profileListUnavailable(let reason):
+            return "Your profile list could not be opened (\(reason)). It was left as it is, and changes are not saved until it can be read."
         }
     }
 }

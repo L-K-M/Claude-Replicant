@@ -450,6 +450,38 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(try manager.store.load(), [readable])
     }
 
+    func testAListThatCannotBeOpenedIsLeftInPlaceAndNeverOverwritten() throws {
+        // A read failure (here: a folder where the file should be) is not bad content.
+        try FileManager.default.createDirectory(at: manager.store.fileURL, withIntermediateDirectories: true)
+
+        manager.load()
+        XCTAssertNotNil(manager.lastError)
+        XCTAssertEqual(try unreadableListCopies(), [])
+
+        XCTAssertThrowsError(try manager.addProfile(named: "Work"))
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: manager.store.fileURL.path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue, "the list that could not be opened must stay where it was")
+    }
+
+    func testAPartlyReadableListIsNotRewrittenWhenItCannotBeSetAside() throws {
+        let readable = ClaudeProfile(label: "Work", dataDirectory: tempDir.appendingPathComponent("Profiles/work", isDirectory: true))
+        try manager.store.save([readable])
+        var entries = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: manager.store.fileURL)) as? [Any])
+        entries.append(["id": UUID().uuidString, "label": "Future", "app": "future-app", "dataDirectory": "/tmp/future"])
+        let original = try JSONSerialization.data(withJSONObject: entries)
+        try original.write(to: manager.store.fileURL)
+        let directory = manager.store.fileURL.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path) }
+
+        manager.load()
+
+        XCTAssertEqual(manager.profiles, [readable])
+        XCTAssertTrue(manager.lastError?.contains("could not be set aside") == true)
+        XCTAssertEqual(try Data(contentsOf: manager.store.fileURL), original)
+    }
+
     /// Contents of the set-aside copies next to profiles.json.
     private func unreadableListCopies() throws -> [Data] {
         let directory = manager.store.fileURL.deletingLastPathComponent()

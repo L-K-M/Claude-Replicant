@@ -14,6 +14,15 @@ struct ProfileStore: Sendable {
 
     private static let unreadablePrefix = "profiles-unreadable-"
 
+    /// Whether the original stays in place after it is set aside.
+    enum SetAside {
+        /// Nothing will be written over it: start the next launch clean.
+        case move
+        /// It is about to be rewritten; keep it until the atomic save
+        /// replaces it, so a failed save loses nothing.
+        case copy
+    }
+
     /// Returns the stored profiles, or an empty list when no file exists yet.
     /// Throws when any entry cannot be decoded.
     func load() throws -> [ClaudeProfile] {
@@ -47,10 +56,10 @@ struct ProfileStore: Sendable {
         try data.write(to: fileURL, options: .atomic)
     }
 
-    /// Moves a list that could not be fully read next to itself, e.g.
+    /// Keeps a list that could not be fully decoded next to itself, e.g.
     /// `profiles-unreadable-20261017-085100.json`, so the next save cannot
-    /// overwrite the only copy. Returns the new location.
-    func setAsideUnreadableFile(at date: Date = Date()) throws -> URL {
+    /// overwrite the only copy. Returns the kept copy's location.
+    func setAsideUnreadableFile(_ method: SetAside = .move, at date: Date = Date()) throws -> URL {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss"
@@ -63,7 +72,10 @@ struct ProfileStore: Sendable {
             destination = directory.appendingPathComponent("\(base)-\(counter).json")
             counter += 1
         }
-        try FileManager.default.moveItem(at: fileURL, to: destination)
+        switch method {
+        case .move: try FileManager.default.moveItem(at: fileURL, to: destination)
+        case .copy: try FileManager.default.copyItem(at: fileURL, to: destination)
+        }
         return destination
     }
 

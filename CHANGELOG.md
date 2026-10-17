@@ -8,8 +8,8 @@
 - File → New ChatGPT Profile (⌥⌘N); the toolbar **+** offers both apps.
   Untitled Claude profiles are now named "New Claude Profile".
 - Settings lists separate locations for Claude.app and ChatGPT.app.
-- Stopped profiles show "Stopping…" until their instance has quit, instead
-  of a Start button that fails. Restart (⌘R) quits and reopens a profile;
+- A profile that is shutting down shows "Stopping…" until its instance has
+  quit, instead of a Start button that fails. Restart (⌘R) quits and reopens a profile;
   Open or Start All during shutdown start it again once it has quit.
 - Stop asks the app to quit like ⌘Q and waits 30 seconds before killing
   it (was SIGTERM, then SIGKILL after 5 seconds), so it can save its

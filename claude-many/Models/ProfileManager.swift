@@ -163,7 +163,8 @@ final class ProfileManager {
             lastError = "\(problem) The original was kept at \(copy.path). Profile data folders were not changed."
             return copy
         } catch {
-            lastError = "\(problem) It could not be set aside (\(error.localizedDescription)), so the next change will replace it."
+            unopenedProfileList = error.localizedDescription
+            lastError = "\(problem) It could not be set aside (\(error.localizedDescription)), so changes are not saved until it can be."
             return nil
         }
     }
@@ -238,10 +239,23 @@ final class ProfileManager {
         try store.save(profiles)
     }
 
+    /// Changes are refused while the list on disk could not be opened or
+    /// set aside, before anything (a row, a running instance) is touched.
+    /// It is opened again first, so a passing obstacle does not block the
+    /// rest of the session.
+    private func ensureProfileListWritable() throws {
+        guard unopenedProfileList != nil else { return }
+        load()
+        if let unopenedProfileList {
+            throw ProfileManagerError.profileListUnavailable(reason: unopenedProfileList)
+        }
+    }
+
     // MARK: Profile CRUD
 
     @discardableResult
     func addProfile(named label: String, app: ManagedApp = .claude) throws -> ClaudeProfile {
+        try ensureProfileListWritable()
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ProfileManagerError.invalidLabel }
 
@@ -269,6 +283,7 @@ final class ProfileManager {
 
     func renameProfile(id: UUID, to newLabel: String) throws {
         guard !ClaudeProfile.isBuiltIn(id: id) else { throw ProfileManagerError.builtInProfile }
+        try ensureProfileListWritable()
         guard let index = profiles.firstIndex(where: { $0.id == id }) else {
             throw ProfileManagerError.profileNotFound
         }
@@ -283,6 +298,7 @@ final class ProfileManager {
     /// login and conversations, and deletion is destructive.
     func removeProfile(id: UUID) throws {
         guard !ClaudeProfile.isBuiltIn(id: id) else { throw ProfileManagerError.builtInProfile }
+        try ensureProfileListWritable()
         stop(id: id)
         profiles.removeAll { $0.id == id }
         releaseUnlistedBuiltIns()
@@ -292,6 +308,7 @@ final class ProfileManager {
     /// Drag-to-reorder within the user-managed profiles (the built-in Default
     /// entry is not part of `profiles` and always stays first).
     func moveProfiles(fromOffsets source: IndexSet, toOffset destination: Int) throws {
+        try ensureProfileListWritable()
         profiles.move(fromOffsets: source, toOffset: destination)
         try persist()
     }
@@ -300,6 +317,12 @@ final class ProfileManager {
     /// taken before a mutation. Persistence failure is reported, not thrown:
     /// undo handlers must not fail.
     func restoreProfiles(_ snapshot: [ClaudeProfile]) {
+        do {
+            try ensureProfileListWritable()
+        } catch {
+            report(error)
+            return
+        }
         let snapshotIDs = Set(snapshot.map(\.id))
         for id in profiles.map(\.id) where !snapshotIDs.contains(id) {
             stop(id: id)

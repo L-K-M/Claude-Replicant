@@ -35,8 +35,9 @@ struct ProfileStore: Sendable {
     }
 
     /// Decodes entry by entry, so one unknown entry (say, from a newer
-    /// version) does not hide the rest. Throws only when the file is not a
-    /// JSON array at all.
+    /// version) does not hide the rest. Throws a `DecodingError` when the
+    /// file is not a JSON array at all, and the file system's error when it
+    /// cannot be read.
     func loadReadable() throws -> Contents {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return Contents() }
         let data = try Data(contentsOf: fileURL)

@@ -459,9 +459,27 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(try unreadableListCopies(), [])
 
         XCTAssertThrowsError(try manager.addProfile(named: "Work"))
+        XCTAssertEqual(manager.profiles, [], "a refused change must not show up either")
         var isDirectory: ObjCBool = false
         XCTAssertTrue(FileManager.default.fileExists(atPath: manager.store.fileURL.path, isDirectory: &isDirectory))
         XCTAssertTrue(isDirectory.boolValue, "the list that could not be opened must stay where it was")
+    }
+
+    func testSavingResumesOnceTheListCanBeOpenedAgain() throws {
+        let saved = ClaudeProfile(label: "Saved", dataDirectory: tempDir.appendingPathComponent("Profiles/saved", isDirectory: true))
+        try manager.store.save([saved])
+        let blocker = manager.store.fileURL.appendingPathExtension("hidden")
+        try FileManager.default.moveItem(at: manager.store.fileURL, to: blocker)
+        try FileManager.default.createDirectory(at: manager.store.fileURL, withIntermediateDirectories: true)
+        manager.load()
+
+        // The obstacle goes away, e.g. a sync tool finished.
+        try FileManager.default.removeItem(at: manager.store.fileURL)
+        try FileManager.default.moveItem(at: blocker, to: manager.store.fileURL)
+        try manager.addProfile(named: "Work")
+
+        XCTAssertEqual(manager.profiles.map(\.label), ["Saved", "Work"])
+        XCTAssertEqual(try manager.store.load().map(\.label), ["Saved", "Work"])
     }
 
     func testAPartlyReadableListIsNotRewrittenWhenItCannotBeSetAside() throws {

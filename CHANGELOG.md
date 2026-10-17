@@ -8,6 +8,9 @@
 - File → New ChatGPT Profile (⌥⌘N); the toolbar **+** offers both apps.
   Untitled Claude profiles are now named "New Claude Profile".
 - Settings lists separate locations for Claude.app and ChatGPT.app.
+- Optional menu bar item (Settings → Show in menu bar) to open, stop, and
+  switch profiles without the window. While it is on, closing the window
+  keeps the app running.
 
 ## 1.0.0
 

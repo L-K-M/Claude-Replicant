@@ -23,9 +23,10 @@ final class ProfileManager {
     private var instanceVersions: [UUID: String] = [:]
     /// The version whose restart notice the user postponed, per app.
     private var postponedRestartVersions: [ManagedApp: String] = [:]
-    /// Isolated entries that quit on their own, with the version they ran,
-    /// until an update shows up or `updateRelaunchWindow` passes.
-    @ObservationIgnored private var recentExits: [UUID: (version: String, date: Date)] = [:]
+    /// Isolated entries that quit on their own, with the version installed
+    /// when they quit, until an update shows up or `updateRelaunchWindow`
+    /// passes.
+    @ObservationIgnored private var recentExits: [UUID: (installed: String?, date: Date)] = [:]
     private var closedForUpdateIDs: [UUID] = []
     private var bundleURLs: [ManagedApp: URL]
 
@@ -459,11 +460,10 @@ final class ProfileManager {
         // a stale handle from an earlier stop could otherwise wipe out the
         // bookkeeping of a freshly restarted instance.
         guard handles[id] === handle else { return }
-        // Quit on its own, perhaps to install an update; see `profilesClosedForUpdate`.
-        if !stoppingProfileIDs.contains(id),
-           profiles.contains(where: { $0.id == id }),
-           let version = instanceVersions[id] {
-            recentExits[id] = (version, Date())
+        // Quit on its own, perhaps to install an update: the updater
+        // replaces the bundle after the app quits. See `profilesClosedForUpdate`.
+        if !stoppingProfileIDs.contains(id), let app = profiles.first(where: { $0.id == id })?.app {
+            recentExits[id] = (app.bundleVersion(at: bundleURL(for: app)), Date())
         }
         instanceVersions[id] = nil
         handles[id] = nil
@@ -521,6 +521,12 @@ final class ProfileManager {
             if installedVersions[app] != version { installedVersions[app] = version }
         }
 
+        // Seen while the version could not be read, say mid-update: assume
+        // current, as for instances adopted at launch.
+        for profile in listedProfiles where isRunning(id: profile.id) && instanceVersions[profile.id] == nil {
+            if let installed = installedVersions[profile.app] { instanceVersions[profile.id] = installed }
+        }
+
         let now = Date()
         for (id, exit) in recentExits {
             guard now.timeIntervalSince(exit.date) < Self.updateRelaunchWindow,
@@ -528,7 +534,7 @@ final class ProfileManager {
                 recentExits[id] = nil
                 continue
             }
-            guard let installed = installedVersions[app], installed != exit.version else { continue }
+            guard let installed = installedVersions[app], installed != exit.installed else { continue }
             recentExits[id] = nil
             if !isRunning(id: id), !closedForUpdateIDs.contains(id) { closedForUpdateIDs.append(id) }
         }

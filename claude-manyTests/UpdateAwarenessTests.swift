@@ -104,6 +104,34 @@ final class UpdateAwarenessTests: XCTestCase {
         XCTAssertEqual(manager.profilesClosedForUpdate, [])
     }
 
+    func testAnOutdatedInstanceQuittingLaterIsNotBlamedOnTheUpdate() async throws {
+        try installClaude(version: "1.0")
+        let (_, process) = try startProfile()
+        try installClaude(version: "1.1")
+        manager.refreshRunningProcesses()
+
+        // Quit by hand well after the update was installed.
+        process.simulateExit()
+        await drainMainQueue()
+        manager.refreshRunningProcesses()
+
+        XCTAssertEqual(manager.profilesClosedForUpdate, [])
+    }
+
+    func testInstancesSeenWhileTheVersionWasUnreadableAreTrackedOnceItIs() throws {
+        // Mid-replacement: the bundle is there, its Info.plist not yet.
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("Claude.app/Contents/MacOS", isDirectory: true),
+                                                withIntermediateDirectories: true)
+        let (work, _) = try startProfile()
+        try installClaude(version: "1.0")
+        manager.refreshRunningProcesses()
+
+        try installClaude(version: "1.1")
+        manager.refreshRunningProcesses()
+
+        XCTAssertEqual(manager.instancesNeedingRestart(for: .claude).map(\.id), [work.id])
+    }
+
     func testOpeningTheProfileAgainClearsTheReport() async throws {
         try installClaude(version: "1.0")
         let (work, process) = try startProfile()

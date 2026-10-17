@@ -65,12 +65,18 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         // Approved or changed in System Settings meanwhile, perhaps.
-        .onAppear { loginItemStatus = LoginItem.status }
+        .onAppear(perform: refreshLoginItemStatus)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            loginItemStatus = LoginItem.status
+            refreshLoginItemStatus()
         }
         .frame(width: 480)
         .padding()
+    }
+
+    /// A failure is stale once the status has been read again.
+    private func refreshLoginItemStatus() {
+        loginItemStatus = LoginItem.status
+        loginItemError = nil
     }
 
     private var opensAtLogin: Binding<Bool> {

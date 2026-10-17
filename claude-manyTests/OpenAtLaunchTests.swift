@@ -72,6 +72,30 @@ final class OpenAtLaunchTests: XCTestCase {
         XCTAssertEqual(launcher.activatedPIDs, [], "a login launch must not pull windows forward")
     }
 
+    func testOneFailingEntryDoesNotKeepTheOthersFromOpening() throws {
+        let work = try manager.addProfile(named: "Work")
+        let personal = try manager.addProfile(named: "Personal")
+        manager.setOpensAtLaunch(true, id: work.id)
+        manager.setOpensAtLaunch(true, id: personal.id)
+        launcher.errorAfterLaunchCount = (1, ProfileManagerError.profileNotFound)
+
+        manager.openProfilesMarkedForLaunch()
+
+        XCTAssertEqual(launcher.launches.count, 1)
+        XCTAssertNotNil(manager.lastError, "the failure is reported")
+    }
+
+    func testUndoingADeleteKeepsTheChoice() throws {
+        let work = try manager.addProfile(named: "Work")
+        manager.setOpensAtLaunch(true, id: work.id)
+        let before = manager.profiles
+        try manager.removeProfile(id: work.id)
+
+        manager.restoreProfiles(before)
+
+        XCTAssertTrue(manager.opensAtLaunch(id: work.id))
+    }
+
     func testUnmarkingAndDeletingStopOpeningAtLaunch() throws {
         let work = try manager.addProfile(named: "Work")
         let personal = try manager.addProfile(named: "Personal")

@@ -128,6 +128,11 @@ final class ProfileManager {
             unopenedProfileList = nil
             setAsideUnreadableList(.move, problem: "Your profile list could not be read.")
             return
+        } catch CocoaError.fileReadNoSuchFile {
+            // Removed between the existence check and the read: nothing to protect.
+            profiles = []
+            unopenedProfileList = nil
+            return
         } catch {
             profiles = []
             unopenedProfileList = error.localizedDescription
@@ -307,9 +312,8 @@ final class ProfileManager {
     /// entry is not part of `profiles` and always stays first).
     func moveProfiles(fromOffsets source: IndexSet, toOffset destination: Int) throws {
         try ensureProfileListWritable()
-        guard source.allSatisfy(profiles.indices.contains), (0...profiles.count).contains(destination) else {
-            throw ProfileManagerError.profileNotFound
-        }
+        // Drag offsets always fit; anything else changes nothing.
+        guard source.allSatisfy(profiles.indices.contains), (0...profiles.count).contains(destination) else { return }
         profiles.move(fromOffsets: source, toOffset: destination)
         try persist()
     }

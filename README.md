@@ -151,8 +151,10 @@ double-click to open a profile, press **Return** to rename it inline, **⌘⌫**
 to delete, and drag to reorder profiles below the pinned Default entry.
 Opening a running profile brings it to the front and, like a Dock click,
 reopens its window if you closed it. macOS may first ask to let Claude
-Replicant control that app; allow it and open the profile again. Because
-builds are ad-hoc signed, macOS may ask again after an update.
+Replicant control that app; allow it and open the profile again. If you
+chose Don't Allow, turn it on in System Settings → Privacy & Security →
+Automation. Because builds are ad-hoc signed, macOS may ask again after an
+update.
 Right-click a row (or use the **Profiles** menu) for Open, Stop, Rename,
 Delete, Reveal in Finder, and Copy Data Folder Path. Add, rename, delete,
 and reorder are all undoable via **⌘Z**. The window title bar shows how many

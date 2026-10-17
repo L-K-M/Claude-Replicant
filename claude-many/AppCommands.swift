@@ -211,8 +211,9 @@ final class ProfilesMenuBridge: NSObject, NSMenuDelegate {
             if let title, menuItem.title != title { menuItem.title = title }
             menuItem.isEnabled = isEnabled
         }
-        // A menu with none of its items yet is one SwiftUI has not filled.
-        if !found.isEmpty {
+        // A menu with only separators (or nothing) is one SwiftUI has not
+        // filled yet. A filled menu with no matching item is reported.
+        if menu.items.contains(where: { !$0.isSeparatorItem }) {
             reportMissingItems(Set(ProfilesMenu.Item.allCases).subtracting(found))
         }
     }

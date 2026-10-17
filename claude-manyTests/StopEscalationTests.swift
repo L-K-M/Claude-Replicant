@@ -6,6 +6,8 @@ import XCTest
 @MainActor
 final class StopEscalationTests: XCTestCase {
     private static let step: Duration = .milliseconds(40)
+    /// Long enough that a test sees SIGTERM before SIGKILL even on a busy machine.
+    private static let killDelay: Duration = .milliseconds(400)
 
     private var root: URL!
     private var defaultsSuiteName: String!
@@ -25,7 +27,7 @@ final class StopEscalationTests: XCTestCase {
             claudeBundleURL: root.appendingPathComponent("Claude.app"),
             defaults: UserDefaults(suiteName: defaultsSuiteName)!,
             dataRootDirectory: root.appendingPathComponent("Profiles"),
-            stopTimeline: StopTimeline(terminateAfter: Self.step, killAfter: Self.step, giveUpAfter: Self.step)
+            stopTimeline: StopTimeline(terminateAfter: Self.step, killAfter: Self.killDelay, giveUpAfter: Self.step)
         )
     }
 

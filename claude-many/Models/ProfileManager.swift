@@ -13,6 +13,10 @@ final class ProfileManager {
     private(set) var runningProfileIDs: Set<UUID> = []
     private(set) var lastError: String?
     private var bundleURLs: [ManagedApp: URL]
+    /// Why profiles.json could not be opened at all (as opposed to decoded),
+    /// or could not be kept safely before rewriting. Saving would replace
+    /// it, so changes are refused until a later load succeeds.
+    @ObservationIgnored private var unopenedProfileList: String?
 
     /// Claude is always listed; ChatGPT once it has a profile.
     var listedApps: [ManagedApp] {
@@ -113,13 +117,67 @@ final class ProfileManager {
     // MARK: Load / persist
 
     func load() {
+        defer { refreshRunningProcesses() }
+
+        let contents: ProfileStore.Contents
         do {
-            profiles = try store.load()
+            contents = try store.loadReadable()
+            unopenedProfileList = nil
+        } catch is DecodingError {
+            profiles = []
+            unopenedProfileList = nil
+            setAsideUnreadableList(.move, problem: "Your profile list could not be read.")
+            return
+        } catch CocoaError.fileReadNoSuchFile {
+            // Removed between the existence check and the read: nothing to protect.
+            profiles = []
+            unopenedProfileList = nil
+            return
         } catch {
-            lastError = "Could not load profiles: \(error.localizedDescription)"
+            profiles = []
+            unopenedProfileList = error.localizedDescription
+            lastError = ProfileManagerError.profileListUnavailable(reason: error.localizedDescription).localizedDescription
             return
         }
-        refreshRunningProcesses()
+
+        profiles = contents.profiles
+        guard contents.unreadableCount > 0 else { return }
+
+        let count = contents.unreadableCount
+        let problem = count == 1
+            ? "1 profile could not be read and was left out."
+            : "\(count) profiles could not be read and were left out."
+        guard setAsideUnreadableList(.copy, problem: problem) else { return }
+
+        // Start the new file with everything that was readable.
+        do {
+            try persist()
+        } catch {
+            lastError = [lastError, "Saving the readable profiles failed: \(error.localizedDescription)"]
+                .compactMap { $0 }
+                .joined(separator: " ")
+        }
+    }
+
+    /// The next save would replace a list that still holds unreadable
+    /// entries, so move it aside first and say where it went. Returns
+    /// whether the list may be written now: its original is kept, or gone.
+    @discardableResult
+    private func setAsideUnreadableList(_ method: ProfileStore.SetAside, problem: String) -> Bool {
+        do {
+            let copy = try store.setAsideUnreadableFile(method)
+            lastError = "\(problem) The original was kept at \(copy.path). Profile data folders were not changed."
+            return true
+        } catch where !FileManager.default.fileExists(atPath: store.fileURL.path) {
+            // Removed since it was read (say, by a sync tool): no save can
+            // overwrite it any more, so there is nothing left to protect.
+            lastError = "\(problem) The file was removed before it could be kept. Profile data folders were not changed."
+            return true
+        } catch {
+            unopenedProfileList = error.localizedDescription
+            lastError = "\(problem) It could not be set aside (\(error.localizedDescription)), so changes are not saved until it can be."
+            return false
+        }
     }
 
     /// Reconcile external starts as well as instances left over from an app relaunch.
@@ -186,13 +244,27 @@ final class ProfileManager {
     }
 
     private func persist() throws {
+        if let unopenedProfileList {
+            throw ProfileManagerError.profileListUnavailable(reason: unopenedProfileList)
+        }
         try store.save(profiles)
+    }
+
+    /// Changes are refused while the list on disk could not be opened or
+    /// kept safely, before anything (a row, a running instance) is touched.
+    /// The next `load()` (reopening the window or the app) tries again; a
+    /// reload in the middle of a change would leave undo with a stale list.
+    private func ensureProfileListWritable() throws {
+        if let unopenedProfileList {
+            throw ProfileManagerError.profileListUnavailable(reason: unopenedProfileList)
+        }
     }
 
     // MARK: Profile CRUD
 
     @discardableResult
     func addProfile(named label: String, app: ManagedApp = .claude) throws -> ClaudeProfile {
+        try ensureProfileListWritable()
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ProfileManagerError.invalidLabel }
 
@@ -220,6 +292,7 @@ final class ProfileManager {
 
     func renameProfile(id: UUID, to newLabel: String) throws {
         guard !ClaudeProfile.isBuiltIn(id: id) else { throw ProfileManagerError.builtInProfile }
+        try ensureProfileListWritable()
         guard let index = profiles.firstIndex(where: { $0.id == id }) else {
             throw ProfileManagerError.profileNotFound
         }
@@ -234,6 +307,7 @@ final class ProfileManager {
     /// login and conversations, and deletion is destructive.
     func removeProfile(id: UUID) throws {
         guard !ClaudeProfile.isBuiltIn(id: id) else { throw ProfileManagerError.builtInProfile }
+        try ensureProfileListWritable()
         stop(id: id)
         profiles.removeAll { $0.id == id }
         releaseUnlistedBuiltIns()
@@ -243,14 +317,25 @@ final class ProfileManager {
     /// Drag-to-reorder within the user-managed profiles (the built-in Default
     /// entry is not part of `profiles` and always stays first).
     func moveProfiles(fromOffsets source: IndexSet, toOffset destination: Int) throws {
+        try ensureProfileListWritable()
+        // Drag offsets always fit; anything else changes nothing.
+        guard source.allSatisfy(profiles.indices.contains), (0...profiles.count).contains(destination) else { return }
         profiles.move(fromOffsets: source, toOffset: destination)
         try persist()
     }
 
     /// Replaces the profile list wholesale. Used by Undo to restore a snapshot
     /// taken before a mutation. Persistence failure is reported, not thrown:
-    /// undo handlers must not fail.
-    func restoreProfiles(_ snapshot: [ClaudeProfile]) {
+    /// undo handlers must not fail. Returns false when the list could not be
+    /// changed at all, so the caller registers no redo for it.
+    @discardableResult
+    func restoreProfiles(_ snapshot: [ClaudeProfile]) -> Bool {
+        do {
+            try ensureProfileListWritable()
+        } catch {
+            report(error)
+            return false
+        }
         let snapshotIDs = Set(snapshot.map(\.id))
         for id in profiles.map(\.id) where !snapshotIDs.contains(id) {
             stop(id: id)
@@ -262,6 +347,7 @@ final class ProfileManager {
         } catch {
             lastError = "Could not save profiles: \(error.localizedDescription)"
         }
+        return true
     }
 
     // MARK: Start / stop
@@ -475,6 +561,7 @@ enum ProfileManagerError: LocalizedError, Equatable {
     case unsupportedBundle(app: ManagedApp, path: String)
     case stopInProgress
     case builtInProfile
+    case profileListUnavailable(reason: String)
 
     var errorDescription: String? {
         switch self {
@@ -490,6 +577,8 @@ enum ProfileManagerError: LocalizedError, Equatable {
             return "This profile's previous instance is still shutting down; try again in a moment."
         case .builtInProfile:
             return "Default entries are built in and cannot be renamed or removed."
+        case .profileListUnavailable(let reason):
+            return "Your profile list was left as it is (\(reason)). Changes are not saved; fix the file, then quit and reopen Claude Replicant."
         }
     }
 }

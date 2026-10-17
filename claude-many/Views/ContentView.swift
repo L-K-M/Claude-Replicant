@@ -409,7 +409,8 @@ struct ContentView: View {
             // registerUndo handlers are nonisolated; undo is only ever
             // triggered from the menu bar or a shortcut on the main thread.
             MainActor.assumeIsolated {
-                manager.restoreProfiles(target)
+                // A refused restore changed nothing; there is nothing to redo.
+                guard manager.restoreProfiles(target) else { return }
                 // Registered while undoing, this becomes the redo action.
                 registerRestore(on: undoManager, manager: manager, target: snapshotBefore, name: name)
             }

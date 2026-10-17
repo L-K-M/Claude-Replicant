@@ -420,6 +420,115 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(corrupt.profiles, [])
     }
 
+    func testUnreadableProfileListSurvivesTheNextSave() throws {
+        let original = Data("garbage".utf8)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        try original.write(to: manager.store.fileURL)
+
+        manager.load()
+        try manager.addProfile(named: "Work")
+
+        XCTAssertEqual(try unreadableListCopies(), [original],
+                       "the only copy of the old list must not be overwritten by the next save")
+        XCTAssertEqual(try manager.store.load().map(\.label), ["Work"])
+    }
+
+    func testReadableProfilesLoadWhenOtherEntriesAreUnreadable() throws {
+        let readable = ClaudeProfile(label: "Work", dataDirectory: tempDir.appendingPathComponent("Profiles/work", isDirectory: true))
+        try manager.store.save([readable])
+        // An entry from a newer version, e.g. after a downgrade, must not take the rest down with it.
+        var entries = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: manager.store.fileURL)) as? [Any])
+        entries.append(["id": UUID().uuidString, "label": "Future", "app": "future-app", "dataDirectory": "/tmp/future"])
+        let original = try JSONSerialization.data(withJSONObject: entries)
+        try original.write(to: manager.store.fileURL)
+
+        manager.load()
+
+        XCTAssertEqual(manager.profiles, [readable])
+        XCTAssertNotNil(manager.lastError)
+        XCTAssertEqual(try unreadableListCopies(), [original])
+        XCTAssertEqual(try manager.store.load(), [readable])
+    }
+
+    func testAListThatCannotBeOpenedIsLeftInPlaceAndNeverOverwritten() throws {
+        // A read failure (here: a folder where the file should be) is not bad content.
+        try FileManager.default.createDirectory(at: manager.store.fileURL, withIntermediateDirectories: true)
+
+        manager.load()
+        XCTAssertNotNil(manager.lastError)
+        XCTAssertEqual(try unreadableListCopies(), [])
+
+        XCTAssertThrowsError(try manager.addProfile(named: "Work"))
+        XCTAssertEqual(manager.profiles, [], "a refused change must not show up either")
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: manager.store.fileURL.path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue, "the list that could not be opened must stay where it was")
+    }
+
+    func testRefusedChangesNeitherQuitInstancesNorReportAsApplied() throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        let handle = try XCTUnwrap(launcher.launchedHandles.first)
+        try FileManager.default.removeItem(at: manager.store.fileURL)
+        try FileManager.default.createDirectory(at: manager.store.fileURL, withIntermediateDirectories: true)
+        manager.load()
+
+        XCTAssertThrowsError(try manager.removeProfile(id: profile.id))
+        XCTAssertFalse(handle.terminationRequested, "a refused delete must not quit the instance")
+        XCTAssertTrue(manager.isRunning(id: profile.id))
+
+        // Undo must learn the restore was refused, so it registers no redo.
+        XCTAssertFalse(manager.restoreProfiles([profile]))
+        XCTAssertEqual(manager.profiles, [])
+    }
+
+    func testSavingResumesOnceTheListCanBeOpenedAgain() throws {
+        let saved = ClaudeProfile(label: "Saved", dataDirectory: tempDir.appendingPathComponent("Profiles/saved", isDirectory: true))
+        try manager.store.save([saved])
+        let blocker = manager.store.fileURL.appendingPathExtension("hidden")
+        try FileManager.default.moveItem(at: manager.store.fileURL, to: blocker)
+        try FileManager.default.createDirectory(at: manager.store.fileURL, withIntermediateDirectories: true)
+        manager.load()
+
+        // The obstacle goes away (e.g. a sync tool finished) and the window is reopened.
+        try FileManager.default.removeItem(at: manager.store.fileURL)
+        try FileManager.default.moveItem(at: blocker, to: manager.store.fileURL)
+        XCTAssertThrowsError(try manager.addProfile(named: "Early"), "no reload in the middle of a change")
+        manager.load()
+        try manager.addProfile(named: "Work")
+
+        XCTAssertEqual(manager.profiles.map(\.label), ["Saved", "Work"])
+        XCTAssertEqual(try manager.store.load().map(\.label), ["Saved", "Work"])
+    }
+
+    func testAPartlyReadableListIsNotRewrittenWhenItCannotBeSetAside() throws {
+        let readable = ClaudeProfile(label: "Work", dataDirectory: tempDir.appendingPathComponent("Profiles/work", isDirectory: true))
+        try manager.store.save([readable])
+        var entries = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: manager.store.fileURL)) as? [Any])
+        entries.append(["id": UUID().uuidString, "label": "Future", "app": "future-app", "dataDirectory": "/tmp/future"])
+        let original = try JSONSerialization.data(withJSONObject: entries)
+        try original.write(to: manager.store.fileURL)
+        let directory = manager.store.fileURL.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path) }
+
+        manager.load()
+
+        XCTAssertEqual(manager.profiles, [readable])
+        XCTAssertTrue(manager.lastError?.contains("could not be set aside") == true)
+        XCTAssertEqual(try Data(contentsOf: manager.store.fileURL), original)
+    }
+
+    /// Contents of the set-aside copies next to profiles.json.
+    private func unreadableListCopies() throws -> [Data] {
+        let directory = manager.store.fileURL.deletingLastPathComponent()
+        return try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .filter { $0.hasPrefix("profiles-unreadable-") }
+            .sorted()
+            .map { try Data(contentsOf: directory.appendingPathComponent($0)) }
+    }
+
     // MARK: Untitled naming / reorder / restore
 
     func testAddUntitledProfileNumbersPlaceholders() throws {

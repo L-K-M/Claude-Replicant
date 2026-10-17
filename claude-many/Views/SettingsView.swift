@@ -3,9 +3,17 @@ import AppKit
 
 struct SettingsView: View {
     @Bindable var manager: ProfileManager
+    @AppStorage(AppPreferences.showsMenuBarExtra) private var showsMenuBarExtra = false
 
     var body: some View {
         Form {
+            Section("General") {
+                Toggle("Show in menu bar", isOn: $showsMenuBarExtra)
+                Text("Start, stop, and switch profiles from the menu bar. \(AppBranding.name) keeps running when its window is closed.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             ForEach(ManagedApp.allCases) { app in
                 applicationSection(for: app)
             }

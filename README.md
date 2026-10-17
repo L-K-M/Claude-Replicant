@@ -152,8 +152,15 @@ to delete, and drag to reorder profiles below the pinned Default entry.
 Right-click a row (or use the **Profiles** menu) for Open, Stop, Rename,
 Delete, Reveal in Finder, and Copy Data Folder Path. Add, rename, delete,
 and reorder are all undoable via **⌘Z**. The window title bar shows how many
-instances are running, and quitting the window quits the app; running Claude
-instances keep running and are adopted on the next launch.
+instances are running, and closing the window quits the app unless the menu
+bar item is on; running Claude instances keep running and are adopted on the
+next launch.
+
+To switch accounts without opening the window, turn on **Show in menu bar**
+in Settings. The menu lists every entry with its running state: choose one to
+start it or bring it to the front, or use Stop, Start All, and Stop All. While
+the menu bar item is on, closing the window keeps Claude Replicant running;
+quit it from that menu.
 
 Deleting a profile only removes it from the list — the data directory stays
 on disk so nothing is lost (remove it manually if you truly want to delete

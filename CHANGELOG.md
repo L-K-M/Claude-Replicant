@@ -8,6 +8,8 @@
 - File → New ChatGPT Profile (⌥⌘N); the toolbar **+** offers both apps.
   Untitled Claude profiles are now named "New Claude Profile".
 - Settings lists separate locations for Claude.app and ChatGPT.app.
+- A new profile's data folder is named after the name you give it, not
+  "new-claude-profile". Folders that already exist are never moved.
 
 ## 1.0.0
 

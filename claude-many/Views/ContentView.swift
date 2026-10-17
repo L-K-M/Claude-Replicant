@@ -39,7 +39,6 @@ struct ContentView: View {
                         emptyState
                             .frame(maxWidth: .infinity)
                             .listRowSeparator(.hidden)
-                            .selectionDisabled()
                     }
                 }
             }
@@ -50,6 +49,7 @@ struct ContentView: View {
         // The running count belongs under the window title, where the
         // README says it is; a toolbar status item needed padding hacks
         // inside macOS 26's glass capsules.
+        .navigationTitle(AppBranding.name)
         .navigationSubtitle(manager.statusSummary)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

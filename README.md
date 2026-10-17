@@ -123,7 +123,8 @@ sizes, run `python3 scripts/generate-icons.py` with Pillow installed.
 
 1. Quit other instances of the same app before signing in to a new
    profile. Browser sign-in and connector callbacks can otherwise reach the
-   wrong instance.
+   wrong instance. When you first start a profile while others of the same
+   app run, Claude Replicant offers to quit them for you.
 2. Launch Claude Replicant and press **⌘N** for a Claude profile or **⌥⌘N**
    for a ChatGPT profile (File menu, or the toolbar **+**), then type a name
    such as "Work" and press Return.

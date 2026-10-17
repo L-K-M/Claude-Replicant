@@ -270,6 +270,20 @@ final class ProfileManager {
         runningProfileIDs.contains(id)
     }
 
+    /// An isolated profile that never ran has no data folder yet, so its
+    /// first start is a sign-in.
+    func needsSignIn(id: UUID) -> Bool {
+        guard let directory = listedProfiles.first(where: { $0.id == id })?.location.dataDirectory else { return false }
+        return !FileManager.default.fileExists(atPath: directory.path)
+    }
+
+    /// Running entries of the same app, in list order. Browser sign-in and
+    /// connector callbacks can reach any of them instead of a new profile.
+    func otherRunningProfiles(sameAppAs id: UUID) -> [ClaudeProfile] {
+        guard let app = listedProfiles.first(where: { $0.id == id })?.app else { return [] }
+        return listedProfiles.filter { $0.id != id && $0.app == app && isRunning(id: $0.id) }
+    }
+
     /// Launch only after a fresh scan, so an externally opened default instance is not duplicated.
     func start(id: UUID) throws {
         guard let profile = listedProfiles.first(where: { $0.id == id }) else {

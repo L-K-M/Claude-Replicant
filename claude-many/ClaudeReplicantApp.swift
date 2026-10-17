@@ -19,7 +19,10 @@ struct ClaudeReplicantApp: App {
         // is the whole app, so opening additional copies of it adds nothing.
         Window(AppBranding.name, id: AppBranding.mainWindowID) {
             ContentView(manager: manager)
-                .onAppear { manager.load() }
+                .onAppear {
+                    manager.load()
+                    manager.openProfilesMarkedForLaunch()
+                }
         }
         .defaultSize(width: 640, height: 440)
         .commands { ProfileCommands() }

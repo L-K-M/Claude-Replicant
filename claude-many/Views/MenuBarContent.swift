@@ -15,7 +15,14 @@ struct MenuBarLabel: View {
     var body: some View {
         Image(systemName: manager.runningCount > 0 ? "person.2.fill" : "person.2")
             .accessibilityLabel("\(AppBranding.name): \(manager.statusSummary)")
-            .task { await manager.monitorRunningProcesses() }
+            .task {
+                // Launched at login, macOS may restore the app with its
+                // window closed: then the menu bar item is all there is.
+                // An open window loads the list itself.
+                if !ProfileCommandCenter.shared.context.hasWindow { manager.load() }
+                manager.openProfilesMarkedForLaunch()
+                await manager.monitorRunningProcesses()
+            }
     }
 }
 

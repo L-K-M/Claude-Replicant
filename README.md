@@ -162,6 +162,12 @@ start it or bring it to the front, or use Stop, Start All, and Stop All. While
 the menu bar item is on, closing the window keeps Claude Replicant running;
 quit it from that menu.
 
+Check **Open at Launch** in a profile's … menu (or its right-click menu) to
+start it whenever Claude Replicant starts; profiles already running are left
+alone. With **Open Claude Replicant at login** in Settings, your accounts are
+ready after you log in. macOS may ask you to allow the login item in System
+Settings → General → Login Items.
+
 Deleting a profile only removes it from the list — the data directory stays
 on disk so nothing is lost (remove it manually if you truly want to delete
 the account data). Settings (**⌘,**) shows the Claude.app and ChatGPT.app

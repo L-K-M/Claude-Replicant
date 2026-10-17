@@ -4,6 +4,8 @@ import AppKit
 struct SettingsView: View {
     @Bindable var manager: ProfileManager
     @AppStorage(AppPreferences.showsMenuBarExtra) private var showsMenuBarExtra = false
+    @State private var loginItemStatus = LoginItem.status
+    @State private var loginItemError: String?
 
     var body: some View {
         Form {
@@ -12,6 +14,24 @@ struct SettingsView: View {
                 Text("Start, stop, and switch profiles from the menu bar. \(AppBranding.name) keeps running when its window is closed.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                Toggle("Open \(AppBranding.name) at login", isOn: opensAtLogin)
+                Text("Profiles with Open at Launch checked in their … menu start with it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if loginItemStatus == .needsApproval {
+                    HStack {
+                        Text("Allow \(AppBranding.name) in Login Items to finish.")
+                            .font(.caption)
+                        Spacer()
+                        Button("Open Login Items…", action: LoginItem.openSystemSettings)
+                    }
+                }
+                if let loginItemError {
+                    Text(loginItemError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
             }
 
             ForEach(ManagedApp.allCases) { app in
@@ -44,8 +64,36 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        // Approved or changed in System Settings meanwhile, perhaps.
+        .onAppear(perform: refreshLoginItemStatus)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshLoginItemStatus()
+        }
         .frame(width: 480)
         .padding()
+    }
+
+    /// A failure is stale once the status has changed, say after allowing
+    /// the app in System Settings.
+    private func refreshLoginItemStatus() {
+        let status = LoginItem.status
+        if status != loginItemStatus { loginItemError = nil }
+        loginItemStatus = status
+    }
+
+    private var opensAtLogin: Binding<Bool> {
+        Binding(
+            get: { loginItemStatus != .off },
+            set: { enabled in
+                do {
+                    try LoginItem.setEnabled(enabled)
+                    loginItemError = nil
+                } catch {
+                    loginItemError = "Could not change the login item: \(error.localizedDescription)"
+                }
+                loginItemStatus = LoginItem.status
+            }
+        )
     }
 
     private func applicationSection(for app: ManagedApp) -> some View {

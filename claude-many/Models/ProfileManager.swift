@@ -309,6 +309,10 @@ final class ProfileManager {
     /// entry is not part of `profiles` and always stays first).
     func moveProfiles(fromOffsets source: IndexSet, toOffset destination: Int) throws {
         try ensureProfileListWritable()
+        // Reopening the list above can replace it; offsets from the old one may not fit.
+        guard source.allSatisfy(profiles.indices.contains), destination <= profiles.count else {
+            throw ProfileManagerError.profileNotFound
+        }
         profiles.move(fromOffsets: source, toOffset: destination)
         try persist()
     }
@@ -564,7 +568,7 @@ enum ProfileManagerError: LocalizedError, Equatable {
         case .builtInProfile:
             return "Default entries are built in and cannot be renamed or removed."
         case .profileListUnavailable(let reason):
-            return "Your profile list could not be opened (\(reason)). It was left as it is, and changes are not saved until it can be read."
+            return "Your profile list was left as it is (\(reason)), and changes are not saved until it can be read and kept safely."
         }
     }
 }

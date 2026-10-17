@@ -125,12 +125,14 @@ final class ProfileManager {
 
     /// Profiles saved before folder names were capped can hold a name the
     /// file system refuses. Such a folder can never have been created, so
-    /// give the profile a fresh, capped one.
+    /// give the profile a fresh, capped one. Names merely longer than the
+    /// cap ("…-2" after a capped base) are valid and stay.
     private func repairOverlongDataDirectories() {
         var repaired = false
         for index in profiles.indices {
             let directory = profiles[index].dataDirectory
-            guard directory.lastPathComponent.utf8.count > Self.maximumSlugLength,
+            let storedLength = directory.lastPathComponent.decomposedStringWithCanonicalMapping.utf8.count
+            guard storedLength > Self.maximumFileNameLength,
                   directory.deletingLastPathComponent().standardizedFileURL.path == dataRootDirectory.standardizedFileURL.path,
                   !FileManager.default.fileExists(atPath: directory.path),
                   let replacement = try? makeUniqueDataDirectory(for: profiles[index].label) else { continue }
@@ -474,6 +476,8 @@ final class ProfileManager {
     /// file system stores them decomposed (at most about three times
     /// longer) and a "-N" suffix is added.
     static let maximumSlugLength = 64
+    /// NAME_MAX on APFS and HFS+, in bytes of the stored (decomposed) name.
+    private static let maximumFileNameLength = 255
 
     /// "My Work (2)" -> "my-work-2". Lowercase, non-alphanumerics become
     /// single dashes, trimmed.

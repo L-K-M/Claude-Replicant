@@ -174,6 +174,23 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertNoThrow(try reloaded.start(id: saved.id))
     }
 
+    func testLegalFolderNamesAreNeverRepaired() throws {
+        // A capped name plus a uniqueness suffix is longer than the cap but valid.
+        let suffixed = manager.dataRootDirectory.appendingPathComponent(
+            String(repeating: "a", count: ProfileManager.maximumSlugLength) + "-2", isDirectory: true)
+        let started = manager.dataRootDirectory.appendingPathComponent(String(repeating: "b", count: 200), isDirectory: true)
+        try FileManager.default.createDirectory(at: started, withIntermediateDirectories: true)
+        let saved = [ClaudeProfile(label: "Never started", dataDirectory: suffixed),
+                     ClaudeProfile(label: "Started", dataDirectory: started)]
+        try manager.store.save(saved)
+
+        let reloaded = makeManager()
+        reloaded.load()
+        reloaded.load()
+
+        XCTAssertEqual(reloaded.profiles.map(\.dataDirectory), saved.map(\.dataDirectory))
+    }
+
     func testLongNamesSharingAPrefixGetSeparateFolders() throws {
         let prefix = String(repeating: "a", count: ProfileManager.maximumSlugLength)
         let first = try manager.addProfile(named: prefix + " one")

@@ -19,8 +19,7 @@ final class UnlistedDataTests: XCTestCase {
             .appendingPathComponent("claude-replicant-unlisted-\(UUID().uuidString)", isDirectory: true)
         trash = root.appendingPathComponent("Trash", isDirectory: true)
         try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: root.appendingPathComponent("Claude.app/Contents/MacOS", isDirectory: true),
-                                                withIntermediateDirectories: true)
+        try TestBundle.make(at: root.appendingPathComponent("Claude.app", isDirectory: true))
         defaultsSuiteName = "claude-replicant-unlisted-tests-\(UUID().uuidString)"
         launcher = FakeClaudeLauncher()
         manager = makeManager()

@@ -55,8 +55,8 @@ jobs:
           VERSION: ${{ steps.source.outputs.version }}
         run: |
           mkdir -p release "$RUNNER_TEMP/claude-replicant-dmg"
-          zip="release/claude-replicant-$VERSION-macOS.zip"
-          dmg="release/claude-replicant-$VERSION-macOS.dmg"
+          zip="release/claude-replicant-$VERSION-macos-universal.zip"
+          dmg="release/claude-replicant-$VERSION-macos-universal.dmg"
 
           ditto -c -k --sequesterRsrc --keepParent "build/Claude Replicant.app" "$zip"
           ditto "build/Claude Replicant.app" "$RUNNER_TEMP/claude-replicant-dmg/Claude Replicant.app"
@@ -64,8 +64,8 @@ jobs:
           hdiutil create -quiet -volname "Claude Replicant $VERSION" \
             -srcfolder "$RUNNER_TEMP/claude-replicant-dmg" -ov -format UDZO "$dmg"
           (cd release && shasum -a 256 \
-            "claude-replicant-$VERSION-macOS.zip" \
-            "claude-replicant-$VERSION-macOS.dmg" > SHA256SUMS.txt)
+            "claude-replicant-$VERSION-macos-universal.zip" \
+            "claude-replicant-$VERSION-macos-universal.dmg" > SHA256SUMS.txt)
 
       - name: Publish draft
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
@@ -87,8 +87,8 @@ jobs:
         run: |
           mkdir "$RUNNER_TEMP/published"
           gh release download "$GITHUB_REF_NAME" --dir "$RUNNER_TEMP/published" \
-            --pattern 'claude-replicant-*-macOS.zip' \
-            --pattern 'claude-replicant-*-macOS.dmg' \
+            --pattern 'claude-replicant-*-macos-*.zip' \
+            --pattern 'claude-replicant-*-macos-*.dmg' \
             --pattern 'SHA256SUMS.txt'
 
           failed=0

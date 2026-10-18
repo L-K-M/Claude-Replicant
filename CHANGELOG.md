@@ -17,6 +17,9 @@
   profiles saved with a longer, never-created folder get a capped one.
 - A new profile's data folder is named after the name you give it, not
   "new-claude-profile". Folders that already exist are never moved.
+- An unreadable `profiles.json` is kept as `profiles-unreadable-<date>.json`
+  instead of being overwritten by the next change. Readable entries still
+  load when others cannot be decoded.
 
 ## 1.0.0
 

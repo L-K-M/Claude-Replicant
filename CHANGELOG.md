@@ -24,6 +24,9 @@
   listed below the profiles. Restore one to use that account again, or
   move it to the Trash (undoable). A folder an instance still runs in is
   never offered.
+- Choosing a different app in Settings (say, Safari) is reported as the
+  wrong app instead of failing on Start with a missing-file error. Claude
+  is recognized by its bundle identifier.
 
 ## 1.0.0
 

@@ -115,6 +115,11 @@ final class ChatGPTProfileTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: profile.dataDirectory.path))
     }
 
+    func testAnotherAppChosenAsChatGPTIsNotMistakenForClassic() throws {
+        try makeChatGPTBundle(identifier: "com.example.notes")
+        XCTAssertEqual(manager.bundleStatus(for: .chatGPT), .otherApp)
+    }
+
     // MARK: Discovery
 
     func testDiscoveryMatchesInstancesToEntriesOfTheirOwnApp() throws {

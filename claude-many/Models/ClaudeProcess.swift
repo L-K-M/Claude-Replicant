@@ -99,6 +99,25 @@ struct RealClaudeLauncher: ClaudeLauncher {
         NSApp.activate()
         NSApp.yieldActivation(to: app)
         _ = app.activate(from: .current, options: [.activateAllWindows])
+        // Sending can stall on a hung instance; keep it off the main thread.
+        let pid = app.processIdentifier
+        DispatchQueue.global(qos: .userInitiated).async { Self.sendReopen(to: pid) }
+    }
+
+    /// Claude and ChatGPT keep running after their last window closes and
+    /// open a new one only on a reopen event, which a Dock click sends.
+    /// Activation alone would show just their menu bar. The event goes to
+    /// this process, not the bundle, so other instances stay put.
+    private static func sendReopen(to pid: pid_t) {
+        let event = NSAppleEventDescriptor(
+            eventClass: AEEventClass(kCoreEventClass),
+            eventID: AEEventID(kAEReopenApplication),
+            targetDescriptor: NSAppleEventDescriptor(processIdentifier: pid),
+            returnID: AEReturnID(kAutoGenerateReturnID),
+            transactionID: AETransactionID(kAnyTransactionID)
+        )
+        // Best effort: without it the instance is still in front.
+        _ = try? event.sendEvent(options: [.noReply], timeout: TimeInterval(kAEDefaultTimeout))
     }
 
     // MARK: Process introspection

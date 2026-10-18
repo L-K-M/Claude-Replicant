@@ -3,9 +3,37 @@ import AppKit
 
 struct SettingsView: View {
     @Bindable var manager: ProfileManager
+    @AppStorage(AppPreferences.showsMenuBarExtra) private var showsMenuBarExtra = false
+    @State private var loginItemStatus = LoginItem.status
+    @State private var loginItemError: String?
 
     var body: some View {
         Form {
+            Section("General") {
+                Toggle("Show in menu bar", isOn: $showsMenuBarExtra)
+                Text("Start, stop, and switch profiles from the menu bar. \(AppBranding.name) keeps running when its window is closed.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Open \(AppBranding.name) at login", isOn: opensAtLogin)
+                Text("Profiles with Open at Launch checked in their … menu start with it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if loginItemStatus == .needsApproval {
+                    HStack {
+                        Text("Allow \(AppBranding.name) in Login Items to finish.")
+                            .font(.caption)
+                        Spacer()
+                        Button("Open Login Items…", action: LoginItem.openSystemSettings)
+                    }
+                }
+                if let loginItemError {
+                    Text(loginItemError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
             ForEach(ManagedApp.allCases) { app in
                 applicationSection(for: app)
             }
@@ -36,13 +64,43 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        // Approved or changed in System Settings meanwhile, perhaps.
+        .onAppear(perform: refreshLoginItemStatus)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshLoginItemStatus()
+        }
         .frame(width: 480)
         .padding()
+        // Keeps the bundle checks current if the main window closes first.
+        .task { await manager.monitorRunningProcesses() }
+    }
+
+    /// A failure is stale once the status has changed, say after allowing
+    /// the app in System Settings.
+    private func refreshLoginItemStatus() {
+        let status = LoginItem.status
+        if status != loginItemStatus { loginItemError = nil }
+        loginItemStatus = status
+    }
+
+    private var opensAtLogin: Binding<Bool> {
+        Binding(
+            get: { loginItemStatus != .off },
+            set: { enabled in
+                do {
+                    try LoginItem.setEnabled(enabled)
+                    loginItemError = nil
+                } catch {
+                    loginItemError = "Could not change the login item: \(error.localizedDescription)"
+                }
+                loginItemStatus = LoginItem.status
+            }
+        )
     }
 
     private func applicationSection(for app: ManagedApp) -> some View {
         let bundle = manager.bundleURL(for: app)
-        let status = manager.bundleStatus(for: app)
+        let status = manager.lastKnownBundleStatus(for: app)
         return Section("\(app.name) Application") {
             LabeledContent(app.bundleName) {
                 HStack(spacing: 8) {
@@ -79,8 +137,24 @@ struct SettingsView: View {
                 .labelStyle(.titleAndIcon)
                 .font(.callout)
             }
+            if let version = manager.installedVersion(of: app) {
+                LabeledContent("Version") {
+                    Text(version)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                if app.isNewerThanChecked(version) {
+                    Text("\(AppBranding.name) was checked with \(app.name) \(app.checkedVersion). If profiles stop staying separate after this update, see the README.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             if status == .unsupported {
                 Text("This build cannot run separate profiles. ChatGPT Classic is not supported; install the current \(app.productName) app.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if status == .otherApp {
+                Text("This is not \(app.productName). Choose \(app.bundleName).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -92,6 +166,7 @@ struct SettingsView: View {
         case .available: return "Found"
         case .missing: return "Not found"
         case .unsupported: return "Unsupported"
+        case .otherApp: return "Wrong app"
         }
     }
 }

@@ -5,7 +5,9 @@ struct ClaudeProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
     let id: UUID
     var label: String
     let app: ManagedApp
-    let location: ClaudeInstanceLocation
+    private(set) var location: ClaudeInstanceLocation
+    /// Chosen by the user; nil follows `displayColor`'s automatic pick.
+    var color: ProfileColor?
 
     static let standard = builtIn(for: .claude)
 
@@ -28,9 +30,39 @@ struct ClaudeProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
 
     var isDefault: Bool { location == .standard }
 
+    /// A name as stored: trimmed, or nil when nothing is left.
+    static func normalizedLabel(_ label: String) -> String? {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// The chosen color, or one derived from the id so it stays the same
+    /// across launches without being stored.
+    var displayColor: ProfileColor {
+        if let color { return color }
+        let palette = ProfileColor.allCases
+        let seed = withUnsafeBytes(of: id.uuid) { $0.reduce(0) { $0 &+ Int($1) } }
+        return palette[seed % palette.count]
+    }
+
+    /// Up to two letters for an avatar: "Personal Account" -> "PA".
+    var monogram: String {
+        label.split(whereSeparator: \.isWhitespace)
+            .prefix(2)
+            .compactMap(\.first)
+            .map { String($0).uppercased() }
+            .joined()
+    }
+
     /// The standard path is display metadata, never a directory the manager creates or copies.
     var dataDirectory: URL {
         location.dataDirectory ?? app.standardDataDirectory
+    }
+
+    /// An `export …` line that points `claude` or `codex` in a terminal at
+    /// this profile's CLI settings and login; nil for the default entries.
+    var terminalExports: String? {
+        ClaudeLaunchConfiguration(app: app, location: location).shellExports
     }
 
     init(id: UUID = UUID(), label: String, app: ManagedApp = .claude, dataDirectory: URL) {
@@ -38,6 +70,13 @@ struct ClaudeProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
         self.label = label
         self.app = app
         location = .isolated(dataDirectory: dataDirectory)
+    }
+
+    /// The same profile, everything else unchanged, with its data in `directory`.
+    func withDataDirectory(_ directory: URL) -> ClaudeProfile {
+        var profile = self
+        profile.location = .isolated(dataDirectory: directory)
+        return profile
     }
 
     private init(id: UUID, label: String, app: ManagedApp, location: ClaudeInstanceLocation) {
@@ -52,6 +91,7 @@ struct ClaudeProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
         case label
         case app
         case dataDirectory
+        case color
     }
 
     init(from decoder: Decoder) throws {
@@ -66,6 +106,8 @@ struct ClaudeProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
         app = try container.decodeIfPresent(ManagedApp.self, forKey: .app) ?? .claude
         let path = try container.decode(String.self, forKey: .dataDirectory)
         location = .isolated(dataDirectory: URL(fileURLWithPath: path, isDirectory: true))
+        // An unknown color (from a newer version) falls back to automatic.
+        color = try? container.decodeIfPresent(ProfileColor.self, forKey: .color)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -78,5 +120,6 @@ struct ClaudeProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
         try container.encode(label, forKey: .label)
         try container.encode(app, forKey: .app)
         try container.encode(dataDirectory.path, forKey: .dataDirectory)
+        try container.encodeIfPresent(color, forKey: .color)
     }
 }

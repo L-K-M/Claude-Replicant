@@ -53,13 +53,31 @@ final class FakeClaudeLauncher: ClaudeLauncher, @unchecked Sendable {
     }
 }
 
+/// A minimal app bundle: the folders and the Info.plist identity the
+/// manager checks before it starts or discovers an app.
+enum TestBundle {
+    static let claudeIdentifier = "com.anthropic.claudefordesktop"
+
+    static func make(at bundle: URL, identifier: String = claudeIdentifier) throws {
+        let contents = bundle.appendingPathComponent("Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: contents.appendingPathComponent("MacOS", isDirectory: true),
+                                                withIntermediateDirectories: true)
+        let info = try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": identifier],
+                                                      format: .xml, options: 0)
+        try info.write(to: contents.appendingPathComponent("Info.plist"))
+    }
+}
+
 final class FakeClaudeProcess: ClaudeProcessHandle, @unchecked Sendable {
     var processIdentifier: Int32 { 4242 }
     let app: ManagedApp
     let dataDirectory: URL?
     private(set) var terminationRequested = false
+    private(set) var signaled = false
     private(set) var forceKilled = false
     private(set) var exited = false
+    /// A process stuck in the kernel, which not even SIGKILL ends.
+    var survivesKill = false
     var terminationHandler: (@Sendable () -> Void)?
 
     /// Models reality: SIGTERM leaves the process alive until it actually
@@ -72,7 +90,11 @@ final class FakeClaudeProcess: ClaudeProcessHandle, @unchecked Sendable {
     }
 
     func terminate() { terminationRequested = true }
-    func terminateForcefully() { forceKilled = true; exited = true }
+    func sendTerminationSignal() { signaled = true }
+    func terminateForcefully() {
+        forceKilled = true
+        if !survivesKill { exited = true }
+    }
 
     /// Simulates the process exiting on its own (after SIGTERM or on its own).
     func simulateExit() {
@@ -126,10 +148,7 @@ final class ProfileManagerTests: XCTestCase {
     }
 
     private func makeBundle() throws {
-        try FileManager.default.createDirectory(
-            at: tempDir.appendingPathComponent("Claude.app/Contents/MacOS", isDirectory: true),
-            withIntermediateDirectories: true
-        )
+        try TestBundle.make(at: tempDir.appendingPathComponent("Claude.app", isDirectory: true))
     }
 
     // MARK: Slugging
@@ -140,6 +159,112 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(ProfileManager.slug(for: "Ötzi's äccount"), "ötzi-s-äccount")
         XCTAssertEqual(ProfileManager.slug(for: "   "), "profile")
         XCTAssertEqual(ProfileManager.slug(for: "Claude"), "claude")
+        // A combining mark with no letter before it would fuse with a dash.
+        XCTAssertEqual(ProfileManager.slug(for: "Work \u{301}"), "work")
+        XCTAssertEqual(ProfileManager.slug(for: "\u{301}Work"), "work")
+        XCTAssertEqual(ProfileManager.slug(for: "a -\u{301}b"), "a-b")
+        // A halfwidth sound mark is a letter (Lm) that still fuses with a dash.
+        XCTAssertEqual(ProfileManager.slug(for: "Work-\u{FF9E}"), "work")
+    }
+
+    func testVeryLongNamesStillGetAFolderTheFileSystemAccepts() throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: String(repeating: "Ångström ", count: 40))
+
+        // The URL may come back decomposed on macOS ("å" as a + ring); compare precomposed.
+        let name = profile.dataDirectory.lastPathComponent.precomposedStringWithCanonicalMapping
+        XCTAssertLessThanOrEqual(name.utf8.count, ProfileManager.maximumSlugLength)
+        XCTAssertFalse(name.hasSuffix("-"))
+        XCTAssertNoThrow(try manager.start(id: profile.id), "the folder is created on first start")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: profile.dataDirectory.path))
+        // The name as the file system stored it, decomposed or not, stays well under 255 bytes.
+        let stored = try FileManager.default.contentsOfDirectory(atPath: manager.dataRootDirectory.path)
+        XCTAssertEqual(stored.count, 1)
+        XCTAssertLessThan(try XCTUnwrap(stored.first).utf8.count, 255)
+    }
+
+    func testProfilesSavedWithAnOverlongFolderAreRepairedOnLoad() throws {
+        try makeBundle()
+        let overlong = manager.dataRootDirectory.appendingPathComponent(String(repeating: "work", count: 70), isDirectory: true)
+        let saved = ClaudeProfile(label: String(repeating: "Work", count: 70), dataDirectory: overlong)
+        try manager.store.save([saved])
+
+        let reloaded = makeManager()
+        reloaded.load()
+
+        let repaired = try XCTUnwrap(reloaded.profiles.first)
+        XCTAssertEqual(repaired.id, saved.id)
+        XCTAssertEqual(repaired.dataDirectory.lastPathComponent.utf8.count, ProfileManager.maximumSlugLength)
+        XCTAssertEqual(try reloaded.store.load(), [repaired], "the repair is saved")
+        XCTAssertNoThrow(try reloaded.start(id: saved.id))
+    }
+
+    func testARepairedFolderNeverTakesAnExistingFolder() throws {
+        let label = String(repeating: "Work", count: 70)
+        let overlong = manager.dataRootDirectory.appendingPathComponent(String(repeating: "work", count: 70), isDirectory: true)
+        // Another account's data already sits under the capped name.
+        let capped = manager.dataRootDirectory.appendingPathComponent(ProfileManager.slug(for: label), isDirectory: true)
+        try FileManager.default.createDirectory(at: capped, withIntermediateDirectories: true)
+        try manager.store.save([ClaudeProfile(label: label, dataDirectory: overlong)])
+
+        let reloaded = makeManager()
+        reloaded.load()
+
+        let repaired = try XCTUnwrap(reloaded.profiles.first).dataDirectory
+        XCTAssertEqual(repaired.lastPathComponent, capped.lastPathComponent + "-2")
+    }
+
+    func testARepairedFolderNeverTakesAnotherProfilesFolderName() throws {
+        let label = String(repeating: "Work", count: 70)
+        let overlong = manager.dataRootDirectory.appendingPathComponent(String(repeating: "work", count: 70), isDirectory: true)
+        // Saved, never started: its folder does not exist yet.
+        let capped = manager.dataRootDirectory.appendingPathComponent(ProfileManager.slug(for: label), isDirectory: true)
+        try manager.store.save([ClaudeProfile(label: "Other", dataDirectory: capped),
+                                ClaudeProfile(label: label, dataDirectory: overlong)])
+
+        let reloaded = makeManager()
+        reloaded.load()
+
+        XCTAssertEqual(reloaded.profiles.map(\.dataDirectory.lastPathComponent),
+                       [capped.lastPathComponent, capped.lastPathComponent + "-2"])
+    }
+
+    func testLegalFolderNamesAreNeverRepaired() throws {
+        // A capped name plus a uniqueness suffix is longer than the cap but valid.
+        let suffixed = manager.dataRootDirectory.appendingPathComponent(
+            String(repeating: "a", count: ProfileManager.maximumSlugLength) + "-2", isDirectory: true)
+        let started = manager.dataRootDirectory.appendingPathComponent(String(repeating: "b", count: 200), isDirectory: true)
+        try FileManager.default.createDirectory(at: started, withIntermediateDirectories: true)
+        // 172 bytes precomposed, 258 decomposed: over the limit as measured, yet it exists with data.
+        let inUse = manager.dataRootDirectory.appendingPathComponent(String(repeating: "å", count: 86), isDirectory: true)
+        try FileManager.default.createDirectory(at: inUse, withIntermediateDirectories: true)
+        let saved = [ClaudeProfile(label: "Never started", dataDirectory: suffixed),
+                     ClaudeProfile(label: "Started", dataDirectory: started),
+                     ClaudeProfile(label: "Started with marks", dataDirectory: inUse)]
+        try manager.store.save(saved)
+
+        let reloaded = makeManager()
+        reloaded.load()
+        reloaded.load()
+
+        XCTAssertEqual(reloaded.profiles.map(\.dataDirectory), saved.map(\.dataDirectory))
+    }
+
+    func testLongNamesSharingAPrefixGetSeparateFolders() throws {
+        let prefix = String(repeating: "a", count: ProfileManager.maximumSlugLength)
+        let first = try manager.addProfile(named: prefix + " one")
+        let second = try manager.addProfile(named: prefix + " two")
+        XCTAssertNotEqual(first.dataDirectory, second.dataDirectory)
+        XCTAssertEqual(second.dataDirectory.lastPathComponent, prefix + "-2")
+    }
+
+    func testCappedSlugsNeverEndInADashOrComeOutEmpty() {
+        XCTAssertEqual(ProfileManager.slug(for: String(repeating: "a", count: 63) + " bc"),
+                       String(repeating: "a", count: 63))
+        // One character made of a letter and many combining marks is longer than the cap.
+        let stacked = "e" + String(repeating: "\u{0301}", count: 40)
+        XCTAssertEqual(ProfileManager.slug(for: stacked), "profile",
+                       "an empty slug would put the profile in the shared Profiles folder")
     }
 
     // MARK: Add / rename / remove
@@ -176,9 +301,147 @@ final class ProfileManagerTests: XCTestCase {
 
     func testRenameProfile() throws {
         let profile = try manager.addProfile(named: "Before")
+        try FileManager.default.createDirectory(at: profile.dataDirectory, withIntermediateDirectories: true)
         try manager.renameProfile(id: profile.id, to: "After")
         XCTAssertEqual(manager.profiles.first?.label, "After")
         XCTAssertEqual(manager.profiles.first?.dataDirectory, profile.dataDirectory, "renaming must not move the data dir")
+    }
+
+    func testNamesAreTrimmedAndBlankNamesAreNoNames() {
+        XCTAssertEqual(ClaudeProfile.normalizedLabel("  Work \n"), "Work")
+        XCTAssertNil(ClaudeProfile.normalizedLabel(""))
+        XCTAssertNil(ClaudeProfile.normalizedLabel(" \t\n "), "the rename field reverts on this instead of failing")
+    }
+
+    func testRenameBeforeFirstStartNamesTheDataFolderAfterTheProfile() throws {
+        try FileManager.default.createDirectory(at: manager.dataRootDirectory.appendingPathComponent("work"),
+                                                withIntermediateDirectories: true)
+        let profile = try manager.addUntitledProfile(for: .claude)
+
+        try manager.renameProfile(id: profile.id, to: "Work")
+
+        let renamed = try XCTUnwrap(manager.profiles.first)
+        XCTAssertEqual(renamed.id, profile.id)
+        XCTAssertEqual(renamed.dataDirectory.lastPathComponent, "work-2", "an existing folder is never reused")
+        XCTAssertEqual(try manager.store.load(), [renamed])
+    }
+
+    func testARenameThatAlreadyFitsKeepsItsNumberedFolder() throws {
+        try manager.addProfile(named: "Work")
+        let second = try manager.addUntitledProfile(for: .claude)
+        try manager.renameProfile(id: second.id, to: "Work")
+        let numbered = try XCTUnwrap(manager.profiles.last).dataDirectory
+        XCTAssertEqual(numbered.lastPathComponent, "work-2")
+
+        try manager.renameProfile(id: second.id, to: "work")
+        XCTAssertEqual(manager.profiles.last?.dataDirectory, numbered, "work-2 already fits; no new folder name")
+    }
+
+    func testRenameToTheSameSlugKeepsTheDataFolder() throws {
+        let profile = try manager.addProfile(named: "Work")
+        try manager.renameProfile(id: profile.id, to: "work")
+        XCTAssertEqual(manager.profiles.first?.dataDirectory, profile.dataDirectory)
+    }
+
+    func testUndoNeverLeavesTwoProfilesInOneFolder() throws {
+        try makeBundle()
+        let first = try manager.addUntitledProfile(for: .claude)
+        let second = try manager.addProfile(named: "Work")
+        let beforeSecondRename = manager.profiles
+        try manager.renameProfile(id: second.id, to: "Play")
+        let beforeFirstRename = manager.profiles
+        // "work" was given up, but undo may need it back, so it stays reserved and
+        // the first profile gets "work-2".
+        try manager.renameProfile(id: first.id, to: "Work")
+        try manager.start(id: first.id)
+        let folderInUse = try XCTUnwrap(manager.profiles.first { $0.id == first.id }).dataDirectory
+
+        manager.restoreProfiles(beforeFirstRename)
+        manager.restoreProfiles(beforeSecondRename)
+
+        let folders = manager.profiles.map(\.dataDirectory.path)
+        XCTAssertEqual(Set(folders).count, folders.count, "each profile needs its own folder: \(folders)")
+        XCTAssertEqual(manager.profiles.first { $0.id == first.id }?.dataDirectory, folderInUse,
+                       "the running profile keeps the folder it uses")
+        XCTAssertEqual(manager.profiles.first { $0.id == second.id }?.label, "Work")
+        XCTAssertEqual(try manager.store.load().map(\.dataDirectory), manager.profiles.map(\.dataDirectory))
+    }
+
+    func testUndoKeepsTheUsedFolderWhenTheOldNameExistsToo() throws {
+        try makeBundle()
+        let profile = try manager.addUntitledProfile(for: .claude)
+        let beforeRename = manager.profiles
+        try manager.renameProfile(id: profile.id, to: "Work")
+        try manager.start(id: profile.id)
+        let folderInUse = try XCTUnwrap(manager.profiles.first).dataDirectory
+        // A later profile used the freed placeholder folder and was deleted; its data stays.
+        try FileManager.default.createDirectory(at: try XCTUnwrap(beforeRename.first).dataDirectory,
+                                                withIntermediateDirectories: true)
+
+        manager.restoreProfiles(beforeRename)
+
+        XCTAssertEqual(manager.profiles.first?.dataDirectory, folderInUse,
+                       "undo must not move a profile into another profile's leftover data")
+    }
+
+    func testUndoNeverRestoresAFolderThatAppearedSince() throws {
+        let profile = try manager.addUntitledProfile(for: .claude)
+        let beforeRename = manager.profiles
+        try manager.renameProfile(id: profile.id, to: "Work")
+        let renamedFolder = try XCTUnwrap(manager.profiles.first).dataDirectory
+        // Something else created the old folder in the meantime, e.g. a restored backup.
+        try FileManager.default.createDirectory(at: profile.dataDirectory, withIntermediateDirectories: true)
+
+        manager.restoreProfiles(beforeRename)
+
+        XCTAssertEqual(manager.profiles.first?.label, profile.label)
+        XCTAssertEqual(manager.profiles.first?.dataDirectory, renamedFolder)
+    }
+
+    func testUndoNeverPointsAProfileAtAnotherProfilesLeftoverFolder() throws {
+        try makeBundle()
+        let first = try manager.addUntitledProfile(for: .claude)
+        let beforeRename = manager.profiles
+        try manager.renameProfile(id: first.id, to: "Work")
+        // A second untitled profile must not get the folder name the first one gave up.
+        let second = try manager.addUntitledProfile(for: .claude)
+        XCTAssertEqual(second.dataDirectory.lastPathComponent, "new-claude-profile-2",
+                       "a folder name is never handed out twice in a session")
+        try manager.start(id: second.id)
+        manager.stop(id: second.id)
+        try manager.removeProfile(id: second.id)
+
+        manager.restoreProfiles(beforeRename)
+
+        XCTAssertNotEqual(manager.profiles.first?.dataDirectory, second.dataDirectory,
+                          "undo must never bind a profile to another account's data")
+    }
+
+    func testRenameNeverRepointsARunningProfile() throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        // The folder was trashed in Finder while the instance runs.
+        try FileManager.default.removeItem(at: profile.dataDirectory)
+
+        try manager.renameProfile(id: profile.id, to: "Personal")
+        XCTAssertEqual(manager.profiles.first?.dataDirectory, profile.dataDirectory)
+    }
+
+    func testUndoingARenameKeepsTheFolderAStartedProfileUses() throws {
+        try makeBundle()
+        let profile = try manager.addUntitledProfile(for: .claude)
+        let beforeRename = manager.profiles
+        try manager.renameProfile(id: profile.id, to: "Work")
+        try manager.start(id: profile.id)
+        let folderInUse = try XCTUnwrap(manager.profiles.first).dataDirectory
+
+        manager.restoreProfiles(beforeRename)
+
+        XCTAssertEqual(manager.profiles.first?.label, profile.label)
+        XCTAssertEqual(manager.profiles.first?.dataDirectory, folderInUse,
+                       "undo must not point a started profile at a folder it never used")
+        XCTAssertTrue(manager.isRunning(id: profile.id))
     }
 
     func testRenameProfileRejectsEmptyName() throws {
@@ -317,6 +580,175 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertTrue(manager.isRunning(id: profile.id))
     }
 
+    // MARK: Stopping and restart
+
+    /// Runs the termination handler's hop to the main queue.
+    private func drainMainQueue() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+    }
+
+    func testStoppingIsShownUntilTheOldProcessExits() async throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        XCTAssertEqual(manager.state(of: profile.id), .running)
+
+        manager.stop(id: profile.id)
+        XCTAssertEqual(manager.state(of: profile.id), .stopping)
+        XCTAssertFalse(manager.isRunning(id: profile.id))
+
+        try XCTUnwrap(launcher.launchedHandles.first).simulateExit()
+        await drainMainQueue()
+        XCTAssertEqual(manager.state(of: profile.id), .stopped)
+    }
+
+    func testRestartStartsAgainOnceTheOldProcessExits() async throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        let first = try XCTUnwrap(launcher.launchedHandles.first)
+
+        manager.restart(id: profile.id)
+        XCTAssertTrue(first.terminationRequested)
+        XCTAssertEqual(manager.state(of: profile.id), .restarting)
+        XCTAssertEqual(launcher.launches.count, 1, "never two instances in one data folder")
+
+        first.simulateExit()
+        await drainMainQueue()
+        XCTAssertEqual(launcher.launches.count, 2)
+        XCTAssertEqual(launcher.launches.last?.location, profile.location)
+        XCTAssertEqual(manager.state(of: profile.id), .running)
+        XCTAssertNil(manager.lastError)
+    }
+
+    func testRestartKeepsTheInstanceRunningWhenTheAppCannotStartAgain() throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        let first = try XCTUnwrap(launcher.launchedHandles.first)
+        try FileManager.default.removeItem(at: tempDir.appendingPathComponent("Claude.app"))
+
+        manager.restart(id: profile.id)
+        XCTAssertFalse(first.terminationRequested, "a restart that cannot start again must not quit")
+        XCTAssertEqual(manager.state(of: profile.id), .running)
+        XCTAssertEqual(manager.lastError,
+                       ProfileManagerError.bundleMissing(
+                           app: .claude, path: tempDir.appendingPathComponent("Claude.app").path
+                       ).errorDescription)
+    }
+
+    func testRestartOfAStoppedProfileStartsIt() throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        manager.restart(id: profile.id)
+        XCTAssertEqual(launcher.launches.count, 1)
+        XCTAssertEqual(manager.state(of: profile.id), .running)
+    }
+
+    func testOpeningAStoppingProfileStartsItAfterExitInsteadOfFailing() async throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        manager.stop(id: profile.id)
+
+        manager.open(id: profile.id)
+        XCTAssertNil(manager.lastError, "no \"still shutting down\" error for a double-click")
+        XCTAssertEqual(manager.state(of: profile.id), .restarting)
+
+        try XCTUnwrap(launcher.launchedHandles.first).simulateExit()
+        await drainMainQueue()
+        XCTAssertEqual(launcher.launches.count, 2)
+        XCTAssertEqual(manager.state(of: profile.id), .running)
+    }
+
+    func testStopCancelsAPendingRestart() async throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        manager.restart(id: profile.id)
+
+        manager.stop(id: profile.id)
+        XCTAssertEqual(manager.state(of: profile.id), .stopping)
+
+        try XCTUnwrap(launcher.launchedHandles.first).simulateExit()
+        await drainMainQueue()
+        XCTAssertEqual(launcher.launches.count, 1)
+        XCTAssertEqual(manager.state(of: profile.id), .stopped)
+    }
+
+    func testStopAllCancelsQueuedRestarts() async throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        manager.restart(id: profile.id)
+        XCTAssertEqual(manager.state(of: profile.id), .restarting)
+
+        manager.stopAll()
+        XCTAssertEqual(manager.state(of: profile.id), .stopping)
+
+        try XCTUnwrap(launcher.launchedHandles.first).simulateExit()
+        await drainMainQueue()
+        XCTAssertEqual(launcher.launches.count, 1)
+        XCTAssertEqual(manager.state(of: profile.id), .stopped)
+    }
+
+    func testAQueuedStartForAnEntryNoLongerListedIsDropped() async throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        manager.restart(id: profile.id)
+        try manager.removeProfile(id: profile.id)
+
+        try XCTUnwrap(launcher.launchedHandles.first).simulateExit()
+        await drainMainQueue()
+        XCTAssertNil(manager.lastError)
+        XCTAssertEqual(launcher.launches.count, 1)
+    }
+
+    func testStartAllStartsStoppingProfilesOnceTheyExit() async throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        manager.stop(id: profile.id)
+
+        manager.startAll()
+        XCTAssertNil(manager.lastError)
+        XCTAssertTrue(manager.isRunning(id: ClaudeProfile.standard.id))
+        XCTAssertEqual(manager.state(of: profile.id), .restarting)
+
+        try XCTUnwrap(launcher.launchedHandles.first).simulateExit()
+        await drainMainQueue()
+        XCTAssertEqual(manager.state(of: profile.id), .running)
+    }
+
+    // MARK: First sign-in
+
+    func testOnlyANeverStartedProfileNeedsASignIn() throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        XCTAssertTrue(manager.needsSignIn(id: profile.id))
+        XCTAssertFalse(manager.needsSignIn(id: ClaudeProfile.standard.id), "the default entry uses the normal login")
+
+        try manager.start(id: profile.id)
+        XCTAssertFalse(manager.needsSignIn(id: profile.id))
+    }
+
+    func testOtherRunningInstancesAreThoseOfTheSameApp() throws {
+        try makeBundle()
+        let work = try manager.addProfile(named: "Work")
+        let personal = try manager.addProfile(named: "Personal")
+        let research = try manager.addProfile(named: "Research", app: .chatGPT)
+        try manager.start(id: ClaudeProfile.standard.id)
+        try manager.start(id: work.id)
+
+        XCTAssertEqual(manager.otherRunningProfiles(sameAppAs: personal.id).map(\.id),
+                       [ClaudeProfile.standard.id, work.id])
+        XCTAssertEqual(manager.otherRunningProfiles(sameAppAs: work.id).map(\.id), [ClaudeProfile.standard.id])
+        XCTAssertEqual(manager.otherRunningProfiles(sameAppAs: research.id), [])
+    }
+
     // MARK: Stop
 
     func testStopMarksProfileStoppedAndTerminatesProcess() throws {
@@ -418,6 +850,115 @@ final class ProfileManagerTests: XCTestCase {
         corrupt.load()
         XCTAssertNotNil(corrupt.lastError)
         XCTAssertEqual(corrupt.profiles, [])
+    }
+
+    func testUnreadableProfileListSurvivesTheNextSave() throws {
+        let original = Data("garbage".utf8)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        try original.write(to: manager.store.fileURL)
+
+        manager.load()
+        try manager.addProfile(named: "Work")
+
+        XCTAssertEqual(try unreadableListCopies(), [original],
+                       "the only copy of the old list must not be overwritten by the next save")
+        XCTAssertEqual(try manager.store.load().map(\.label), ["Work"])
+    }
+
+    func testReadableProfilesLoadWhenOtherEntriesAreUnreadable() throws {
+        let readable = ClaudeProfile(label: "Work", dataDirectory: tempDir.appendingPathComponent("Profiles/work", isDirectory: true))
+        try manager.store.save([readable])
+        // An entry from a newer version, e.g. after a downgrade, must not take the rest down with it.
+        var entries = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: manager.store.fileURL)) as? [Any])
+        entries.append(["id": UUID().uuidString, "label": "Future", "app": "future-app", "dataDirectory": "/tmp/future"])
+        let original = try JSONSerialization.data(withJSONObject: entries)
+        try original.write(to: manager.store.fileURL)
+
+        manager.load()
+
+        XCTAssertEqual(manager.profiles, [readable])
+        XCTAssertNotNil(manager.lastError)
+        XCTAssertEqual(try unreadableListCopies(), [original])
+        XCTAssertEqual(try manager.store.load(), [readable])
+    }
+
+    func testAListThatCannotBeOpenedIsLeftInPlaceAndNeverOverwritten() throws {
+        // A read failure (here: a folder where the file should be) is not bad content.
+        try FileManager.default.createDirectory(at: manager.store.fileURL, withIntermediateDirectories: true)
+
+        manager.load()
+        XCTAssertNotNil(manager.lastError)
+        XCTAssertEqual(try unreadableListCopies(), [])
+
+        XCTAssertThrowsError(try manager.addProfile(named: "Work"))
+        XCTAssertEqual(manager.profiles, [], "a refused change must not show up either")
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: manager.store.fileURL.path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue, "the list that could not be opened must stay where it was")
+    }
+
+    func testRefusedChangesNeitherQuitInstancesNorReportAsApplied() throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        try manager.start(id: profile.id)
+        let handle = try XCTUnwrap(launcher.launchedHandles.first)
+        try FileManager.default.removeItem(at: manager.store.fileURL)
+        try FileManager.default.createDirectory(at: manager.store.fileURL, withIntermediateDirectories: true)
+        manager.load()
+
+        XCTAssertThrowsError(try manager.removeProfile(id: profile.id))
+        XCTAssertFalse(handle.terminationRequested, "a refused delete must not quit the instance")
+        XCTAssertTrue(manager.isRunning(id: profile.id))
+
+        // Undo must learn the restore was refused, so it registers no redo.
+        XCTAssertFalse(manager.restoreProfiles([profile]))
+        XCTAssertEqual(manager.profiles, [])
+    }
+
+    func testSavingResumesOnceTheListCanBeOpenedAgain() throws {
+        let saved = ClaudeProfile(label: "Saved", dataDirectory: tempDir.appendingPathComponent("Profiles/saved", isDirectory: true))
+        try manager.store.save([saved])
+        let blocker = manager.store.fileURL.appendingPathExtension("hidden")
+        try FileManager.default.moveItem(at: manager.store.fileURL, to: blocker)
+        try FileManager.default.createDirectory(at: manager.store.fileURL, withIntermediateDirectories: true)
+        manager.load()
+
+        // The obstacle goes away (e.g. a sync tool finished) and the window is reopened.
+        try FileManager.default.removeItem(at: manager.store.fileURL)
+        try FileManager.default.moveItem(at: blocker, to: manager.store.fileURL)
+        XCTAssertThrowsError(try manager.addProfile(named: "Early"), "no reload in the middle of a change")
+        manager.load()
+        try manager.addProfile(named: "Work")
+
+        XCTAssertEqual(manager.profiles.map(\.label), ["Saved", "Work"])
+        XCTAssertEqual(try manager.store.load().map(\.label), ["Saved", "Work"])
+    }
+
+    func testAPartlyReadableListIsNotRewrittenWhenItCannotBeSetAside() throws {
+        let readable = ClaudeProfile(label: "Work", dataDirectory: tempDir.appendingPathComponent("Profiles/work", isDirectory: true))
+        try manager.store.save([readable])
+        var entries = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: manager.store.fileURL)) as? [Any])
+        entries.append(["id": UUID().uuidString, "label": "Future", "app": "future-app", "dataDirectory": "/tmp/future"])
+        let original = try JSONSerialization.data(withJSONObject: entries)
+        try original.write(to: manager.store.fileURL)
+        let directory = manager.store.fileURL.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path) }
+
+        manager.load()
+
+        XCTAssertEqual(manager.profiles, [readable])
+        XCTAssertTrue(manager.lastError?.contains("could not be set aside") == true)
+        XCTAssertEqual(try Data(contentsOf: manager.store.fileURL), original)
+    }
+
+    /// Contents of the set-aside copies next to profiles.json.
+    private func unreadableListCopies() throws -> [Data] {
+        let directory = manager.store.fileURL.deletingLastPathComponent()
+        return try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .filter { $0.hasPrefix("profiles-unreadable-") }
+            .sorted()
+            .map { try Data(contentsOf: directory.appendingPathComponent($0)) }
     }
 
     // MARK: Untitled naming / reorder / restore
@@ -524,6 +1065,78 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertFalse(manager.isRunning(id: one.id))
         XCTAssertFalse(manager.isRunning(id: two.id))
         XCTAssertNotNil(manager.lastError)
+    }
+
+    // MARK: Bundle identity
+
+    private func writeClaudeInfo(identifier: String) throws {
+        try TestBundle.make(at: tempDir.appendingPathComponent("Claude.app", isDirectory: true), identifier: identifier)
+    }
+
+    func testClaudeIsRecognizedByItsBundleIdentifier() throws {
+        try makeBundle()
+        XCTAssertEqual(manager.bundleStatus(for: .claude), .available)
+    }
+
+    func testAFolderThatIsNotAnAppIsTheWrongApp() throws {
+        try FileManager.default.createDirectory(at: tempDir.appendingPathComponent("Claude.app/Contents/MacOS"),
+                                                withIntermediateDirectories: true)
+        XCTAssertEqual(manager.bundleStatus(for: .claude), .otherApp)
+    }
+
+    func testInstancesOfTheWrongAppAreNotAdopted() throws {
+        try writeClaudeInfo(identifier: "com.apple.Safari")
+        launcher.runningHandlesToReturn = [FakeClaudeProcess(app: .claude)]
+        manager.load()
+        XCTAssertFalse(manager.isRunning(id: ClaudeProfile.standard.id))
+    }
+
+    func testInstancesStayAdoptedWhenTheBundleIsDeleted() throws {
+        XCTAssertEqual(manager.bundleStatus(for: .claude), .missing)
+        launcher.runningHandlesToReturn = [FakeClaudeProcess(app: .claude)]
+        manager.load()
+        XCTAssertTrue(manager.isRunning(id: ClaudeProfile.standard.id),
+                      "an instance whose bundle was removed must stay stoppable")
+    }
+
+    func testAnotherAppChosenAsClaudeIsRefusedWithItsOwnError() throws {
+        try writeClaudeInfo(identifier: "com.apple.Safari")
+        let profile = try manager.addProfile(named: "Work")
+
+        XCTAssertEqual(manager.bundleStatus(for: .claude), .otherApp)
+        XCTAssertThrowsError(try manager.start(id: profile.id)) {
+            XCTAssertEqual($0 as? ProfileManagerError,
+                           .otherApp(app: .claude, path: manager.bundleURL(for: .claude).path))
+            XCTAssertTrue($0.localizedDescription.contains("is not Claude Desktop"))
+        }
+        XCTAssertEqual(launcher.launches.count, 0)
+    }
+
+    func testStartAllScansForRunningInstancesOnce() throws {
+        try makeBundle()
+        try manager.addProfile(named: "One")
+        try manager.addProfile(named: "Two")
+        let scansBefore = launcher.discoveryCalls
+
+        manager.startAll()
+
+        XCTAssertEqual(launcher.launches.count, 3)
+        XCTAssertEqual(launcher.discoveryCalls - scansBefore, manager.listedApps.count,
+                       "one scan per listed app, not one per profile")
+    }
+
+    func testViewsSeeTheBundleStatusOfTheLastRefresh() throws {
+        XCTAssertEqual(manager.lastKnownBundleStatus(for: .claude), .missing)
+
+        try makeBundle()
+        XCTAssertEqual(manager.lastKnownBundleStatus(for: .claude), .missing, "rendering must not read the disk")
+        XCTAssertEqual(manager.bundleStatus(for: .claude), .available)
+
+        manager.refreshRunningProcesses()
+        XCTAssertEqual(manager.lastKnownBundleStatus(for: .claude), .available)
+
+        manager.setBundlePath(tempDir.appendingPathComponent("Elsewhere/Claude.app").path, for: .claude)
+        XCTAssertEqual(manager.lastKnownBundleStatus(for: .claude), .missing)
     }
 
     // MARK: Bundle path persistence

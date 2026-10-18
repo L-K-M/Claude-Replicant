@@ -11,8 +11,11 @@ protocol ClaudeProcessHandle: AnyObject, Sendable {
     var dataDirectory: URL? { get }
     /// Called (on an arbitrary queue) when the process exits on its own.
     var terminationHandler: (@Sendable () -> Void)? { get set }
-    /// Ask the process to exit cleanly (SIGTERM).
+    /// Ask the app to quit the way ⌘Q does, so it can save its state. A
+    /// process that is not a running app gets SIGTERM instead.
     func terminate()
+    /// SIGTERM, for an app that missed or ignored the quit request.
+    func sendTerminationSignal()
     /// Kill the process outright (SIGKILL).
     func terminateForcefully()
 }
@@ -31,7 +34,7 @@ protocol ClaudeLauncher: Sendable {
     /// Current-user standard and isolated instances of `app` running `executable`.
     func runningHandles(app: ManagedApp, executable: URL) -> [ClaudeProcessHandle]
     /// Brings the process's windows to the front (double-click "Open").
-    func activate(handle: ClaudeProcessHandle)
+    @MainActor func activate(handle: ClaudeProcessHandle)
 }
 
 /// Real launcher backed by Foundation's `Process`.
@@ -61,9 +64,15 @@ struct RealClaudeLauncher: ClaudeLauncher {
     /// Ambiguous launches are excluded; see `ClaudeLaunchConfiguration.location(of:app:)`.
     func runningHandles(app: ManagedApp, executable: URL) -> [ClaudeProcessHandle] {
         let target = executable.resolvingSymlinksInPath().path
+        // The name the process was exec'd by: the bundle path or its resolved target.
+        let commandNames = Set([target, executable.path].map(Self.commandName(forExecutable:)))
         var result: [ClaudeProcessHandle] = []
-        for (pid, startTime) in Self.allProcesses() {
-            // Read argv/environment only for candidate executables during periodic discovery.
+        for (pid, startTime, command) in Self.allProcesses() {
+            // Runs every 2 s on the main actor: the kernel's command name rules
+            // out nearly every process without a syscall, and only the few
+            // candidates get their path, argv, and environment read. APFS is
+            // usually case-insensitive, so `claude` may run `Claude`.
+            guard commandNames.contains(where: { $0.caseInsensitiveCompare(command) == .orderedSame }) else { continue }
             if let path = Self.executablePath(for: pid), !Self.executableMatches(path, target: target) {
                 continue
             }
@@ -81,9 +90,34 @@ struct RealClaudeLauncher: ClaudeLauncher {
         return result
     }
 
+    /// macOS 14 activation is cooperative: only the active app can hand
+    /// activation to another, and choosing an item in the menu bar extra
+    /// does not make Claude Replicant active. Take activation, then yield it.
+    @MainActor
     func activate(handle: ClaudeProcessHandle) {
-        NSRunningApplication(processIdentifier: pid_t(handle.processIdentifier))?
-            .activate(options: [])
+        guard let app = NSRunningApplication(processIdentifier: pid_t(handle.processIdentifier)) else { return }
+        NSApp.activate()
+        NSApp.yieldActivation(to: app)
+        _ = app.activate(from: .current, options: [.activateAllWindows])
+        // Sending can stall on a hung instance; keep it off the main thread.
+        let pid = app.processIdentifier
+        DispatchQueue.global(qos: .userInitiated).async { Self.sendReopen(to: pid) }
+    }
+
+    /// Claude and ChatGPT keep running after their last window closes and
+    /// open a new one only on a reopen event, which a Dock click sends.
+    /// Activation alone would show just their menu bar. The event goes to
+    /// this process, not the bundle, so other instances stay put.
+    private static func sendReopen(to pid: pid_t) {
+        let event = NSAppleEventDescriptor(
+            eventClass: AEEventClass(kCoreEventClass),
+            eventID: AEEventID(kAEReopenApplication),
+            targetDescriptor: NSAppleEventDescriptor(processIdentifier: pid),
+            returnID: AEReturnID(kAutoGenerateReturnID),
+            transactionID: AETransactionID(kAnyTransactionID)
+        )
+        // Best effort: without it the instance is still in front.
+        _ = try? event.sendEvent(options: [.noReply], timeout: TimeInterval(kAEDefaultTimeout))
     }
 
     // MARK: Process introspection
@@ -100,7 +134,20 @@ struct RealClaudeLauncher: ClaudeLauncher {
         return String(cString: buffer)
     }
 
-    private static func allProcesses() -> [(pid: Int32, startTime: timeval)] {
+    /// The kernel records the executable's file name, cut to MAXCOMLEN
+    /// bytes, as the command name (`kp_proc.p_comm`) at exec time.
+    private static func commandName(forExecutable path: String) -> String {
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        return String(decoding: name.utf8.prefix(Int(MAXCOMLEN)), as: UTF8.self)
+    }
+
+    private static func commandName(of process: kinfo_proc) -> String {
+        withUnsafeBytes(of: process.kp_proc.p_comm) { bytes in
+            String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        }
+    }
+
+    private static func allProcesses() -> [(pid: Int32, startTime: timeval, command: String)] {
         // The process table can grow between sizing and reading. Retry that race.
         for _ in 0..<processTableReadAttempts {
             var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
@@ -116,20 +163,31 @@ struct RealClaudeLauncher: ClaudeLauncher {
             let populatedCount = size / MemoryLayout<kinfo_proc>.size
             return procs.prefix(populatedCount)
                 .filter { $0.kp_eproc.e_ucred.cr_uid == geteuid() }
-                .map { ($0.kp_proc.p_pid, $0.kp_proc.p_un.__p_starttime) }
+                .map { ($0.kp_proc.p_pid, $0.kp_proc.p_un.__p_starttime, commandName(of: $0)) }
         }
         return []
     }
 
     /// The kernel-reported start time of a PID, or nil if no such process
-    /// exists. Together with the PID it uniquely identifies a process instance.
+    /// exists or it has exited and awaits reaping (a zombie). Together with
+    /// the PID it uniquely identifies a process instance.
     static func processStartTime(for pid: Int32) -> timeval? {
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
         var size = MemoryLayout<kinfo_proc>.size
         var proc = kinfo_proc()
         guard sysctl(&mib, u_int(mib.count), &proc, &size, nil, 0) == 0,
-              size > 0 else { return nil }
+              size > 0,
+              Int32(proc.kp_proc.p_stat) != SZOMB else { return nil }
         return proc.kp_proc.p_un.__p_starttime
+    }
+
+    /// Sends the quit Apple event that ⌘Q sends. False when the process is
+    /// not a running app (no bundle, such as a script) or the event could
+    /// not be sent.
+    static func requestQuit(of pid: Int32) -> Bool {
+        guard let app = NSRunningApplication(processIdentifier: pid),
+              app.bundleIdentifier != nil else { return false }
+        return app.terminate()
     }
 
     /// Reads argv as null-terminated entries, preserving spaces in profile paths.
@@ -146,6 +204,7 @@ struct RealClaudeLauncher: ClaudeLauncher {
     /// The kernel appends " (deleted)" to the path of a binary that was
     /// replaced on disk while running (e.g. a Claude auto-update).
     private static func executableMatches(_ path: String, target: String) -> Bool {
+        if path == target { return true }
         let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
         if resolved == target { return true }
         return resolved.hasPrefix(target) && resolved.hasSuffix(" (deleted)")
@@ -179,11 +238,20 @@ final class RealClaudeProcess: ClaudeProcessHandle, @unchecked Sendable {
         }
     }
 
+    // An exited child is reaped and its PID may be reused: never signal it.
     func terminate() {
-        process.terminate() // SIGTERM; Electron apps shut down gracefully
+        guard process.isRunning else { return }
+        if RealClaudeLauncher.requestQuit(of: process.processIdentifier) { return }
+        sendTerminationSignal()
+    }
+
+    func sendTerminationSignal() {
+        guard process.isRunning else { return }
+        kill(process.processIdentifier, SIGTERM)
     }
 
     func terminateForcefully() {
+        guard process.isRunning else { return }
         kill(process.processIdentifier, SIGKILL)
     }
 }
@@ -236,6 +304,12 @@ final class AttachedClaudeProcess: ClaudeProcessHandle, @unchecked Sendable {
     }
 
     func terminate() {
+        guard sameProcessExists else { return }
+        if RealClaudeLauncher.requestQuit(of: processIdentifier) { return }
+        sendTerminationSignal()
+    }
+
+    func sendTerminationSignal() {
         guard sameProcessExists else { return }
         kill(processIdentifier, SIGTERM)
     }

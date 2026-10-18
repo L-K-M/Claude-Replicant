@@ -7,7 +7,7 @@
 
 <img src="media-sources/app-icon.png" alt="Claude Replicant icon with paired JCVD portraits" width="160" align="right">
 
-**Latest release:** v<!-- version -->1.2.0<!-- /version --> · [Download](https://github.com/L-K-M/claude-many/releases/latest)
+**Latest release:** v<!-- version -->1.2.0<!-- /version --> · [Download](https://github.com/L-K-M/Claude-Replicant/releases/latest)
 
 Run multiple Claude Desktop or ChatGPT instances side by side on one Mac,
 each logged into a different account. There is no fixed limit — you add one
@@ -15,6 +15,20 @@ profile per login you have.
 
 A tiny native macOS app (Swift/SwiftUI) that manages one private data
 directory per profile and launches Claude Desktop or ChatGPT pointed at it.
+
+## Install
+
+Download the DMG or ZIP from the
+[latest release](https://github.com/L-K-M/Claude-Replicant/releases/latest) and move
+`Claude Replicant.app` to `/Applications`. The app is ad-hoc signed, not
+notarized, so macOS blocks its first launch:
+
+- **macOS 15 Sequoia and later:** open the app once and dismiss the warning,
+  then open **System Settings → Privacy & Security**, click **Open Anyway**
+  next to the Claude Replicant message, and confirm. Control-clicking and
+  choosing Open no longer bypasses this check.
+- **macOS 14 Sonoma:** Control-click the app in Finder, choose **Open**, and
+  confirm.
 
 ## What it is
 
@@ -48,6 +62,9 @@ It also sets `CLAUDE_CONFIG_DIR` and `CLAUDE_SECURESTORAGE_CONFIG_DIR` to
 `<profile directory>/.claude`, keeping Code configuration and its credential
 namespace separate. Process discovery reads the directory from argv, so
 restarting Claude Replicant can adopt instances it previously launched.
+The app at the configured location must carry Claude Desktop's bundle
+identifier, `com.anthropic.claudefordesktop`; anything else is reported as
+the wrong app and is neither started nor watched.
 
 **Default Claude** runs the same executable with no `--user-data-dir`
 argument. Inherited `CLAUDE_USER_DATA_DIR`, `CLAUDE_CONFIG_DIR`, and
@@ -69,9 +86,11 @@ inspected in Claude Desktop **2.31226.1** from the official
 Desktop profile API. Updates can change its behavior. The live smoke test
 checks the installed app; it does not verify signing in or running Code tasks.
 
-Stopping a profile sends SIGTERM to its process (with a SIGKILL fallback
-after 5 seconds), terminating only that instance — other profiles and
-any separately launched Claude Desktop instances are unaffected.
+Stopping a profile asks its app to quit the way ⌘Q does, so it can save
+its state. If it is still running 10 seconds later it gets SIGTERM, and
+after another 20 seconds SIGKILL; **Force Quit** in the row's menu kills
+it at once. Only that instance is affected: other profiles and any
+separately launched Claude Desktop instances keep running.
 
 ### ChatGPT
 
@@ -123,7 +142,8 @@ sizes, run `python3 scripts/generate-icons.py` with Pillow installed.
 
 1. Quit other instances of the same app before signing in to a new
    profile. Browser sign-in and connector callbacks can otherwise reach the
-   wrong instance.
+   wrong instance. When you first start a profile while others of the same
+   app run, Claude Replicant offers to quit them for you.
 2. Launch Claude Replicant and press **⌘N** for a Claude profile or **⌥⌘N**
    for a ChatGPT profile (File menu, or the toolbar **+**), then type a name
    such as "Work" and press Return.
@@ -149,15 +169,47 @@ app copy after installing `Claude Replicant.app`; keep the profile data.
 The profile list works like Finder: click to select (⇧/⌘ for multiples),
 double-click to open a profile, press **Return** to rename it inline, **⌘⌫**
 to delete, and drag to reorder profiles below the pinned Default entry.
-Right-click a row (or use the **Profiles** menu) for Open, Stop, Rename,
-Delete, Reveal in Finder, and Copy Data Folder Path. Add, rename, delete,
+Opening a running profile brings it to the front and, like a Dock click,
+reopens its window if you closed it. macOS may first ask to let Claude
+Replicant control that app; allow it and open the profile again. If you
+chose Don't Allow, turn it on in System Settings → Privacy & Security →
+Automation. Because builds are ad-hoc signed, macOS may ask again after an
+update.
+Right-click a row (or use the **Profiles** menu) for Open, Stop, Restart
+(**⌘R**), Rename, Delete, Reveal in Finder, and Copy Data Folder Path; the
+context and row menus also offer Copy Terminal Environment. Each profile shows
+a colored monogram; pick its color from **Color** in the row's menu. A profile
+that is shutting down shows "Stopping…" until its instance has quit; Open or
+Start All during that time start it again once it has, and Stop cancels that.
+Restart is offered only while the app can start again. Add, rename, delete,
 and reorder are all undoable via **⌘Z**. The window title bar shows how many
-instances are running, and quitting the window quits the app; running Claude
-instances keep running and are adopted on the next launch.
+instances are running, and closing the window quits the app unless the menu
+bar item is on; running Claude instances keep running and are adopted on the
+next launch.
+
+To switch accounts without opening the window, turn on **Show in menu bar**
+in Settings. The menu lists every entry with its running state: choose one to
+start it or bring it to the front, or use Stop, Start All, and Stop All. While
+the menu bar item is on, closing the window keeps Claude Replicant running;
+quit it from that menu.
+
+To use a profile's account from the command line, right-click it and choose
+**Copy Terminal Environment**, paste the copied `export …` line into Terminal,
+then run `claude` (or `codex` for a ChatGPT profile). The CLI then reads the
+same `.claude/` (or `.codex/`) settings, history, and credential namespace the
+app gives its own Code sessions. The setting lasts for that Terminal session.
+
+Check **Open at Launch** in a profile's … menu (or its right-click menu) to
+start it whenever Claude Replicant starts; profiles already running are left
+alone. With **Open Claude Replicant at login** in Settings, your accounts are
+ready after you log in. macOS may ask you to allow the login item in System
+Settings → General → Login Items.
 
 Deleting a profile only removes it from the list — the data directory stays
-on disk so nothing is lost (remove it manually if you truly want to delete
-the account data). Settings (**⌘,**) shows the Claude.app and ChatGPT.app
+on disk so nothing is lost. Folders no profile uses appear under **Unlisted
+Data** at the bottom of the list: **Restore** lists one again with its
+sign-in intact, and **Move to Trash…** removes it (undoable with **⌘Z**).
+This also recovers every profile if `profiles.json` is ever lost. Settings (**⌘,**) shows the Claude.app and ChatGPT.app
 locations with a **Choose…** picker if either is not installed in
 `/Applications`; the chosen paths persist across launches.
 
@@ -210,7 +262,12 @@ a draft GitHub release. The gated live smoke test is described under
 - **Auto-updates apply to every profile.** The Claude.app bundle is shared;
   an update replaces the binary all profiles launch. Profile data is
   retained, but an updater relaunch may drop profile arguments. Quit profile
-  instances before updating and reopen them through claude-many afterwards.
+  instances before updating and reopen them through Claude Replicant
+  afterwards. Claude Replicant notices an update while its window is open:
+  it offers to restart profiles still running the old version, and warns
+  when a profile quit for the update, since a window that reopened by
+  itself is Default Claude. Settings shows each app's version and flags
+  versions newer than the ones this mechanism was checked with.
 - **Managed local storage is per profile**, under
   `~/Library/Application Support/Claude-Many/Profiles/<slug>/`, with Code
   configuration in `.claude/`. Claude Replicant does not copy or modify your
@@ -231,8 +288,8 @@ a draft GitHub release. The gated live smoke test is described under
   quit while instances are still running, the next launch detects each
   profile's live instance (by its data directory), shows it as running, and
   refuses to start a second one into that data directory until the first has
-  actually exited. Starting a profile right after stopping it is likewise
-  refused until the previous instance has fully shut down.
+  actually exited. Starting a profile right after stopping it likewise
+  waits until the previous instance has fully shut down.
   Discovery is best-effort when macOS cannot read a process snapshot.
 - Claude Desktop's own settings (theme, etc.) are per profile too, since
   they are part of the userData directory.

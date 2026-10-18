@@ -44,6 +44,17 @@ enum MacPlatform {
         revealInFinder([url])
     }
 
+    /// The root is created lazily; make it exist so Finder has something
+    /// real to show.
+    @MainActor
+    static func revealProfilesFolder() {
+        try? FileManager.default.createDirectory(
+            at: ProfileManager.profilesRootDirectory,
+            withIntermediateDirectories: true
+        )
+        revealInFinder(ProfileManager.profilesRootDirectory)
+    }
+
     private static func existingAncestor(of url: URL) -> URL {
         var candidate = url
         let fm = FileManager.default
@@ -55,17 +66,28 @@ enum MacPlatform {
         return candidate
     }
 
-    /// The app's Finder icon, or the generic application icon while it is missing.
+    @MainActor private static var applicationIcons: [String: NSImage] = [:]
+
+    /// The app's Finder icon, or the generic application icon while it is
+    /// missing. Rows ask on every render, so found icons are kept.
+    @MainActor
     static func applicationIcon(at url: URL) -> NSImage {
+        if let icon = applicationIcons[url.path] { return icon }
         guard FileManager.default.fileExists(atPath: url.path) else {
             return NSWorkspace.shared.icon(for: .applicationBundle)
         }
-        return NSWorkspace.shared.icon(forFile: url.path)
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        applicationIcons[url.path] = icon
+        return icon
     }
 
     static func copyPathToPasteboard(_ url: URL) {
+        copyToPasteboard(url.path)
+    }
+
+    static func copyToPasteboard(_ text: String) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(url.path, forType: .string)
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     /// `~/Library/...` instead of `/Users/name/Library/...`: shorter and the

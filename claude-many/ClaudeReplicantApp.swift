@@ -5,6 +5,7 @@ import AppKit
 struct ClaudeReplicantApp: App {
     @State private var manager: ProfileManager
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @AppStorage(AppPreferences.showsMenuBarExtra) private var showsMenuBarExtra = false
 
     init() {
         // Built in init() rather than as a property initializer: SILGen
@@ -16,9 +17,12 @@ struct ClaudeReplicantApp: App {
     var body: some Scene {
         // A single management window, like System Settings: the profile list
         // is the whole app, so opening additional copies of it adds nothing.
-        Window(AppBranding.name, id: "main") {
+        Window(AppBranding.name, id: AppBranding.mainWindowID) {
             ContentView(manager: manager)
-                .onAppear { manager.load() }
+                .onAppear {
+                    manager.load()
+                    manager.openProfilesMarkedForLaunch()
+                }
         }
         .defaultSize(width: 640, height: 440)
         .commands { ProfileCommands() }
@@ -26,13 +30,21 @@ struct ClaudeReplicantApp: App {
         Settings {
             SettingsView(manager: manager)
         }
+
+        MenuBarExtra(isInserted: $showsMenuBarExtra) {
+            MenuBarContent(manager: manager)
+        } label: {
+            MenuBarLabel(manager: manager)
+        }
+        .menuBarExtraStyle(.menu)
     }
 }
 
-/// The app only supervises Claude instances while its window is open, so it
-/// follows the single-window-utility convention and quits when the last
-/// window closes. Running Claude instances keep running and are adopted on
-/// the next launch.
+/// Without the menu bar extra the app only supervises Claude instances
+/// while its window is open, so it follows the single-window-utility
+/// convention and quits when the last window closes. With the extra it
+/// stays in the menu bar. Running Claude instances keep running either way
+/// and are adopted on the next launch.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuBridge = ProfilesMenuBridge()
@@ -42,6 +54,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        !UserDefaults.standard.bool(forKey: AppPreferences.showsMenuBarExtra)
     }
 }

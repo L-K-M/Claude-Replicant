@@ -9,37 +9,57 @@ struct ContentView: View {
     @State private var editingDraft = ""
     @State private var pendingDeleteIDs: Set<UUID> = []
     @State private var showingDeleteConfirm = false
+    @State private var pendingTrash: UnlistedProfileData?
+    @State private var showingTrashConfirm = false
+    @State private var signInCheck: SignInCheck?
     @Environment(\.undoManager) private var envUndoManager
     @Environment(\.openSettings) private var openSettings
     @FocusState private var nameFieldFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
-            ForEach(manager.listedApps.filter { manager.bundleStatus(for: $0) != .available }) { app in
+            ForEach(manager.listedApps.filter { manager.lastKnownBundleStatus(for: $0) != .available }) { app in
                 bundleBanner(for: app)
                 Divider()
             }
+            UpdateBanners(manager: manager)
 
             List(selection: $selection) {
                 // Built-in Default entries sit outside the reorderable
                 // ForEach, so they always stay pinned at the top.
-                ForEach(manager.builtInProfiles) { profile in
-                    row(for: profile)
+                Section("Default") {
+                    ForEach(manager.builtInProfiles) { profile in
+                        row(for: profile)
+                    }
                 }
 
-                ForEach(manager.profiles) { profile in
-                    row(for: profile)
-                }
-                .onMove(perform: moveProfiles)
+                Section("Profiles") {
+                    ForEach(manager.profiles) { profile in
+                        row(for: profile)
+                    }
+                    .onMove(perform: moveProfiles)
 
-                if manager.profiles.isEmpty {
-                    emptyState
+                    if manager.profiles.isEmpty {
+                        emptyState
+                            .frame(maxWidth: .infinity)
+                            .listRowSeparator(.hidden)
+                    }
+                }
+
+                if !manager.unlistedData.isEmpty {
+                    unlistedDataSection
                 }
             }
-            .listStyle(.inset(alternatesRowBackgrounds: true))
+            .listStyle(.inset)
             .contextMenu(forSelectionType: UUID.self, menu: contextMenuContent, primaryAction: openProfiles)
+            .onKeyPress(.return, phases: .down, action: renameOnReturn)
         }
-        .frame(minWidth: 460, minHeight: 260)
+        .frame(minWidth: 460, minHeight: 320)
+        // The running count belongs under the window title, where the
+        // README says it is; a toolbar status item needed padding hacks
+        // inside macOS 26's glass capsules.
+        .navigationTitle(AppBranding.name)
+        .navigationSubtitle(manager.statusSummary)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
@@ -51,13 +71,6 @@ struct ContentView: View {
                 }
                 .help("New Profile (⌘N for Claude, ⌥⌘N for ChatGPT)")
             }
-            ToolbarItem(placement: .status) {
-                // macOS 26 wraps toolbar items in a glass capsule sized to
-                // the text; inset it so the label clears the rounded ends.
-                Text(manager.statusSummary)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 12)
-            }
         }
         .task { await manager.monitorRunningProcesses() }
         .alert("Something went wrong", isPresented: errorBinding) {
@@ -65,14 +78,33 @@ struct ContentView: View {
         } message: {
             Text(manager.lastError ?? "")
         }
+        .alert(trashAlertTitle, isPresented: $showingTrashConfirm, presenting: pendingTrash) { data in
+            Button("Move to Trash", role: .destructive) { performTrash(data) }
+            Button("Cancel", role: .cancel) {}
+        } message: { data in
+            Text("It holds that \(data.app.name) account's sign-in, settings, and local history. Undo (⌘Z) puts it back until you empty the Trash.")
+        }
         .alert(deleteAlertTitle, isPresented: $showingDeleteConfirm) {
             Button("Delete", role: .destructive, action: performDelete)
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(deleteAlertMessage)
         }
+        .alert(signInCheck?.title ?? "", isPresented: signInCheckBinding, presenting: signInCheck) { check in
+            Button("Quit Others and Start") { quitOthersAndStart(check) }
+            Button("Start Anyway") { manager.open(id: check.profile.id) }
+            Button("Cancel", role: .cancel) {}
+        } message: { check in
+            Text(check.message)
+        }
         .focusedSceneValue(\.profileCommands, commandContext)
-        .onAppear(perform: syncCommandContext)
+        .onAppear {
+            syncCommandContext()
+            createPendingProfile()
+        }
+        // With the menu bar item the app outlives this window; the Profiles
+        // menu must not act on a selection nobody can see.
+        .onDisappear { ProfileCommandCenter.shared.context = ProfileCommandContext() }
         .onChange(of: commandContextSignature) { _, _ in syncCommandContext() }
         .onChange(of: nameFieldFocused) { _, focused in
             // Clicking elsewhere commits an in-progress rename, like Finder.
@@ -89,8 +121,10 @@ struct ContentView: View {
             nameFieldFocused: $nameFieldFocused,
             commitEditing: commitEditing,
             cancelEditing: cancelEditing,
+            requestStart: { open(profile) },
             requestRename: { beginRename(profile.id) },
-            requestDelete: { requestDelete([profile.id]) }
+            requestDelete: { requestDelete([profile.id]) },
+            requestColor: { setColor($0, for: profile.id) }
         )
         .tag(profile.id)
     }
@@ -107,20 +141,30 @@ struct ContentView: View {
         }
     }
 
-    /// Shown while a listed app is missing or is a build that cannot run profiles.
+    /// Shown while a listed app is missing, another app, or a build that cannot run profiles.
     private func bundleBanner(for app: ManagedApp) -> some View {
         let path = MacPlatform.homeRelativePath(of: manager.bundleURL(for: app))
-        let unsupported = manager.bundleStatus(for: app) == .unsupported
+        let title: String
+        let detail: String
+        switch manager.lastKnownBundleStatus(for: app) {
+        case .unsupported:
+            title = "\(app.bundleName) cannot run profiles"
+            detail = "The app at \(path) is an unsupported build, such as ChatGPT Classic. Install the current \(app.productName) app or locate it."
+        case .otherApp:
+            title = "The chosen \(app.bundleName) is not \(app.productName)"
+            detail = "The app at \(path) is not \(app.productName). \(app.name) profiles cannot start until you locate it."
+        case .missing, .available:
+            title = "\(app.bundleName) was not found"
+            detail = "Expected at \(path). \(app.name) profiles cannot start until you locate it."
+        }
         return HStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .symbolRenderingMode(.multicolor)
                 .font(.title2)
             VStack(alignment: .leading, spacing: 2) {
-                Text(unsupported ? "\(app.bundleName) cannot run profiles" : "\(app.bundleName) was not found")
+                Text(title)
                     .font(.headline)
-                Text(unsupported
-                     ? "The app at \(path) is an unsupported build, such as ChatGPT Classic. Install the current \(app.productName) app or locate it."
-                     : "Expected at \(path). \(app.name) profiles cannot start until you locate it.")
+                Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -143,25 +187,32 @@ struct ContentView: View {
         let targets = selectedProfiles
         let deletables = targets.filter { !$0.isDefault }
         let runningTargets = targets.filter { manager.isRunning(id: $0.id) }
+        // Stop also cancels a start queued behind a quitting instance.
+        let stoppableTargets = targets.filter { [.running, .restarting].contains(manager.state(of: $0.id)) }
+        let restartableTargets = runningTargets.filter(canRestart)
         var context = ProfileCommandContext()
+        context.hasWindow = true
         context.selectionCount = targets.count
         context.canOpen = !targets.isEmpty
-        context.canStop = !runningTargets.isEmpty
+        context.canStop = !stoppableTargets.isEmpty
+        context.canRestart = !restartableTargets.isEmpty
         context.canRename = editingID == nil && targets.count == 1 && !targets[0].isDefault
         context.canReveal = !targets.isEmpty
         context.canCopyPath = targets.count == 1
         context.canDelete = !deletables.isEmpty
-        let launchableApps = manager.listedApps.filter { manager.bundleStatus(for: $0) == .available }
+        let launchableApps = manager.listedApps.filter { manager.lastKnownBundleStatus(for: $0) == .available }
         context.canStartAll = manager.listedProfiles.contains {
             launchableApps.contains($0.app) && !manager.isRunning(id: $0.id)
         }
-        context.canStopAll = manager.runningCount > 0
+        context.canStopAll = manager.listedProfiles.contains { [.running, .restarting].contains(manager.state(of: $0.id)) }
         context.openTitle = targets.count == 1 ? "Open “\(targets[0].label)”" : "Open \(targets.count) Profiles"
-        context.stopTitle = runningTargets.count == 1 ? "Stop “\(runningTargets[0].label)”" : "Stop \(runningTargets.count) Profiles"
+        context.stopTitle = stoppableTargets.count == 1 ? "Stop “\(stoppableTargets[0].label)”" : "Stop \(stoppableTargets.count) Profiles"
+        context.restartTitle = restartableTargets.count == 1 ? "Restart “\(restartableTargets[0].label)”" : "Restart \(restartableTargets.count) Profiles"
         context.deleteTitle = deleteTitle(for: deletables)
         context.newProfile = newProfile
         context.openSelected = { openProfiles(selection) }
         context.stopSelected = { stopProfiles(selection) }
+        context.restartSelected = { restartProfiles(selection) }
         context.renameSelected = {
             if targets.count == 1 { beginRename(targets[0].id) }
         }
@@ -172,7 +223,6 @@ struct ContentView: View {
         }
         context.startAll = manager.startAll
         context.stopAll = manager.stopAll
-        context.openProfilesFolder = openProfilesFolder
         return context
     }
 
@@ -181,12 +231,15 @@ struct ContentView: View {
     private var commandContextSignature: String {
         let selectionPart = selection.sorted { $0.uuidString < $1.uuidString }
             .map(\.uuidString).joined()
-        let profilePart = manager.profiles.map { "\($0.id.uuidString)=\($0.label)" }.joined()
+        // The folder can change without the label (re-slugged before first start).
+        let profilePart = manager.profiles.map { "\($0.id.uuidString)=\($0.label)@\($0.dataDirectory.path)" }.joined()
         let runningPart = manager.runningProfileIDs.sorted { $0.uuidString < $1.uuidString }
             .map(\.uuidString).joined()
+        let restartingPart = manager.listedProfiles.filter { manager.state(of: $0.id) == .restarting }
+            .map(\.id.uuidString).joined()
         let editingPart = editingID?.uuidString ?? ""
-        let bundlePart = ManagedApp.allCases.map { "\(manager.bundleStatus(for: $0))" }.joined(separator: ",")
-        return [selectionPart, editingPart, profilePart, runningPart, bundlePart]
+        let bundlePart = ManagedApp.allCases.map { "\(manager.lastKnownBundleStatus(for: $0))" }.joined(separator: ",")
+        return [selectionPart, editingPart, profilePart, runningPart, restartingPart, bundlePart]
             .joined(separator: "|")
     }
 
@@ -214,17 +267,36 @@ struct ContentView: View {
             } else {
                 Button("Open \(targets.count) Profiles") { openProfiles(ids) }
             }
-            if targets.contains(where: { manager.isRunning(id: $0.id) }) {
+            if targets.contains(where: { [.running, .restarting].contains(manager.state(of: $0.id)) }) {
                 Button("Stop") { stopProfiles(ids) }
+            }
+            if targets.contains(where: canRestart) {
+                Button("Restart") { restartProfiles(ids) }
+            }
+            if targets.contains(where: { [.stopping, .restarting].contains(manager.state(of: $0.id)) }) {
+                Button("Force Quit") { forceQuitProfiles(ids) }
             }
             Divider()
             if targets.count == 1, !targets[0].isDefault {
                 Button("Rename…") { beginRename(targets[0].id) }
+                ProfileColorMenu(profile: targets[0]) { setColor($0, for: targets[0].id) }
+            }
+            if targets.count == 1 {
+                Toggle("Open at Launch", isOn: Binding(
+                    get: { manager.opensAtLaunch(id: targets[0].id) },
+                    set: { manager.setOpensAtLaunch($0, id: targets[0].id) }
+                ))
             }
             Button("Reveal in Finder") { reveal(ids) }
             if targets.count == 1 {
                 Button("Copy Data Folder Path") {
                     MacPlatform.copyPathToPasteboard(targets[0].dataDirectory)
+                }
+                if let exports = targets[0].terminalExports {
+                    Button("Copy Terminal Environment") {
+                        MacPlatform.copyToPasteboard(exports)
+                    }
+                    .help(ProfileRowView.terminalEnvironmentHelp(for: targets[0].app))
                 }
             }
             let deletables = targets.filter { !$0.isDefault }
@@ -250,14 +322,53 @@ struct ContentView: View {
         }
     }
 
+    /// File > New Profile chosen while the window was closed. Deferred a
+    /// turn so the window's profile list has loaded.
+    private func createPendingProfile() {
+        guard let app = ProfileCommandCenter.shared.pendingNewProfile else { return }
+        ProfileCommandCenter.shared.pendingNewProfile = nil
+        DispatchQueue.main.async { newProfile(app) }
+    }
+
     /// "Open" acts like double-clicking a file: start a stopped instance or
     /// bring a running one to the front. Never stops a running profile, and
     /// never fires while a rename text field is active.
     private func openProfiles(_ ids: Set<UUID>) {
         guard editingID == nil else { return }
-        for profile in manager.listedProfiles where ids.contains(profile.id) {
+        let targets = manager.listedProfiles.filter { ids.contains($0.id) }
+        if targets.count == 1 {
+            open(targets[0])
+            return
+        }
+        for profile in targets {
             manager.open(id: profile.id)
         }
+    }
+
+    /// A profile's first start is its sign-in, and the browser's callback
+    /// can reach another running instance of the same app instead. Offer
+    /// to quit those first.
+    private func open(_ profile: ClaudeProfile) {
+        let others = manager.otherRunningProfiles(sameAppAs: profile.id)
+        guard !manager.isRunning(id: profile.id), manager.needsSignIn(id: profile.id), !others.isEmpty else {
+            manager.open(id: profile.id)
+            return
+        }
+        signInCheck = SignInCheck(profile: profile, others: others)
+    }
+
+    private func quitOthersAndStart(_ check: SignInCheck) {
+        for other in check.others {
+            manager.stop(id: other.id)
+        }
+        manager.open(id: check.profile.id)
+    }
+
+    private var signInCheckBinding: Binding<Bool> {
+        Binding(
+            get: { signInCheck != nil },
+            set: { if !$0 { signInCheck = nil } }
+        )
     }
 
     private func stopProfiles(_ ids: Set<UUID>) {
@@ -266,21 +377,30 @@ struct ContentView: View {
         }
     }
 
+    /// Restarts only running entries; stopped ones stay stopped.
+    private func restartProfiles(_ ids: Set<UUID>) {
+        for profile in manager.listedProfiles where ids.contains(profile.id) && canRestart(profile) {
+            manager.restart(id: profile.id)
+        }
+    }
+
+    /// Kills instances that are taking too long to quit.
+    private func forceQuitProfiles(_ ids: Set<UUID>) {
+        for profile in manager.listedProfiles where ids.contains(profile.id) {
+            manager.forceQuit(id: profile.id)
+        }
+    }
+
+    /// Restart quits first, so offer it only while the app can start again.
+    private func canRestart(_ profile: ClaudeProfile) -> Bool {
+        manager.isRunning(id: profile.id) && manager.lastKnownBundleStatus(for: profile.app) == .available
+    }
+
     private func reveal(_ ids: Set<UUID>) {
         let urls = manager.listedProfiles
             .filter { ids.contains($0.id) }
             .map(\.dataDirectory)
         MacPlatform.revealInFinder(urls)
-    }
-
-    private func openProfilesFolder() {
-        // The root is created lazily; make it exist so Finder has something
-        // real to show.
-        try? FileManager.default.createDirectory(
-            at: ProfileManager.profilesRootDirectory,
-            withIntermediateDirectories: true
-        )
-        MacPlatform.revealInFinder(ProfileManager.profilesRootDirectory)
     }
 
     private func locateBundle(for app: ManagedApp) {
@@ -303,8 +423,24 @@ struct ContentView: View {
         }
     }
 
+    /// Return renames the selected profile, like Finder. Handled by the
+    /// list rather than the menu so it never fires in other windows. Only a
+    /// plain Return: ⌘Return opens and ⇧⌘Return stops through the menu.
+    private func renameOnReturn(_ press: KeyPress) -> KeyPress.Result {
+        let targets = selectedProfiles
+        guard press.modifiers.isDisjoint(with: [.command, .shift, .option, .control]),
+              editingID == nil, targets.count == 1, !targets[0].isDefault else { return .ignored }
+        beginRename(targets[0].id)
+        return .handled
+    }
+
     private func commitEditing() {
         guard let id = editingID else { return }
+        // An emptied name keeps the old one, like Finder, instead of an error alert.
+        guard ClaudeProfile.normalizedLabel(editingDraft) != nil else {
+            cancelEditing()
+            return
+        }
         editingID = nil
         nameFieldFocused = false
         performProfileEdit("Rename Profile") {
@@ -315,6 +451,12 @@ struct ContentView: View {
     private func cancelEditing() {
         editingID = nil
         nameFieldFocused = false
+    }
+
+    private func setColor(_ color: ProfileColor?, for id: UUID) {
+        performProfileEdit("Change Color") {
+            try manager.setColor(color, forProfile: id)
+        }
     }
 
     // MARK: Delete
@@ -347,7 +489,7 @@ struct ContentView: View {
         } else if running > 1 {
             parts.append("\(running) of them are currently running and will be quit first.")
         }
-        parts.append("This only removes \(targets.count == 1 ? "it" : "them") from the list. The data directory stays on disk, so nothing is lost.")
+        parts.append("This only removes \(targets.count == 1 ? "it" : "them") from the list. The data stays on disk under Unlisted Data, where you can restore it or move it to the Trash.")
         return parts.joined(separator: " ")
     }
 
@@ -360,6 +502,81 @@ struct ContentView: View {
                 try manager.removeProfile(id: id)
             }
         }
+    }
+
+    // MARK: Unlisted data
+
+    /// Data folders no profile uses, such as a deleted profile's. Rows are
+    /// untagged, so they are not part of the profile selection.
+    private var unlistedDataSection: some View {
+        Section {
+            ForEach(manager.unlistedData) { data in
+                UnlistedDataRow(
+                    data: data,
+                    restore: { restoreUnlistedData(data) },
+                    moveToTrash: {
+                        pendingTrash = data
+                        showingTrashConfirm = true
+                    }
+                )
+            }
+        } header: {
+            Text("Unlisted Data")
+        } footer: {
+            Text("Folders no profile uses, such as a deleted profile's. Restore one to use that account again.")
+        }
+    }
+
+    private func restoreUnlistedData(_ data: UnlistedProfileData) {
+        var restored: ClaudeProfile?
+        performProfileEdit("Restore Profile") {
+            restored = try manager.restoreUnlistedData(at: data.directory)
+        }
+        if let restored { selection = [restored.id] }
+    }
+
+    private var trashAlertTitle: String {
+        "Move “\(pendingTrash?.directory.lastPathComponent ?? "")” to the Trash?"
+    }
+
+    private func performTrash(_ data: UnlistedProfileData) {
+        do {
+            let trashed = try manager.trashUnlistedData(at: data.directory)
+            guard let undoManager else { return }
+            Self.registerPutBack(on: undoManager, manager: manager, trashed: trashed, original: data.directory)
+        } catch {
+            manager.report(error)
+        }
+    }
+
+    /// Undo moves the folder back from the Trash; redo trashes it again.
+    private static func registerPutBack(on undoManager: UndoManager, manager: ProfileManager, trashed: URL, original: URL) {
+        undoManager.registerUndo(withTarget: manager) { manager in
+            MainActor.assumeIsolated {
+                do {
+                    try manager.putBackTrashedData(from: trashed, to: original)
+                } catch {
+                    manager.report(error)
+                    return
+                }
+                registerTrash(on: undoManager, manager: manager, original: original)
+            }
+        }
+        undoManager.setActionName("Move to Trash")
+    }
+
+    private static func registerTrash(on undoManager: UndoManager, manager: ProfileManager, original: URL) {
+        undoManager.registerUndo(withTarget: manager) { manager in
+            MainActor.assumeIsolated {
+                do {
+                    let trashed = try manager.trashUnlistedData(at: original)
+                    registerPutBack(on: undoManager, manager: manager, trashed: trashed, original: original)
+                } catch {
+                    manager.report(error)
+                }
+            }
+        }
+        undoManager.setActionName("Move to Trash")
     }
 
     // MARK: Undo plumbing
@@ -409,7 +626,8 @@ struct ContentView: View {
             // registerUndo handlers are nonisolated; undo is only ever
             // triggered from the menu bar or a shortcut on the main thread.
             MainActor.assumeIsolated {
-                manager.restoreProfiles(target)
+                // A refused restore changed nothing; there is nothing to redo.
+                guard manager.restoreProfiles(target) else { return }
                 // Registered while undoing, this becomes the redo action.
                 registerRestore(on: undoManager, manager: manager, target: snapshotBefore, name: name)
             }
@@ -422,5 +640,20 @@ struct ContentView: View {
             get: { manager.lastError != nil },
             set: { if !$0 { manager.clearError() } }
         )
+    }
+}
+
+/// A first start while other instances of the same app are running.
+private struct SignInCheck {
+    let profile: ClaudeProfile
+    let others: [ClaudeProfile]
+
+    var title: String {
+        "Quit other \(profile.app.name) instances before signing in?"
+    }
+
+    var message: String {
+        let names = others.map { "“\($0.label)”" }.joined(separator: ", ")
+        return "“\(profile.label)” has not been signed in yet. Sign-in links from your browser can open in a running instance (\(names)) instead of this one. Quit Others stops them; their logins are kept."
     }
 }

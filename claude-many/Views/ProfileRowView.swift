@@ -8,6 +8,7 @@ struct ProfileRowView: View {
     var nameFieldFocused: FocusState<Bool>.Binding
     let commitEditing: () -> Void
     let cancelEditing: () -> Void
+    let requestStart: () -> Void
     let requestRename: () -> Void
     let requestDelete: () -> Void
     let requestColor: (ProfileColor?) -> Void
@@ -69,10 +70,7 @@ struct ProfileRowView: View {
                 }
                 .help("Waiting for this \(profile.app.name) instance to quit. Force Quit in the … menu ends it now.")
             case .stopped:
-                Button {
-                    do { try manager.start(id: profile.id) }
-                    catch { manager.report(error) }
-                } label: {
+                Button(action: requestStart) {
                     Text("Start").frame(minWidth: Self.actionButtonWidth)
                 }
                 .buttonStyle(.bordered)

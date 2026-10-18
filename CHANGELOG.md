@@ -52,6 +52,8 @@
   same app icon on every row; choose a color from the row's Color menu.
   Start and Stop buttons share one width and no longer use the prominent
   style on every row.
+- Starting a profile for the first time while other instances of the same
+  app run offers to quit them first, so the sign-in reaches the new one.
 
 ## 1.0.0
 

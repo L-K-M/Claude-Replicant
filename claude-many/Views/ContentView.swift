@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var showingDeleteConfirm = false
     @State private var pendingTrash: UnlistedProfileData?
     @State private var showingTrashConfirm = false
+    @State private var signInCheck: SignInCheck?
     @Environment(\.undoManager) private var envUndoManager
     @Environment(\.openSettings) private var openSettings
     @FocusState private var nameFieldFocused: Bool
@@ -85,6 +86,13 @@ struct ContentView: View {
         } message: {
             Text(deleteAlertMessage)
         }
+        .alert(signInCheck?.title ?? "", isPresented: signInCheckBinding, presenting: signInCheck) { check in
+            Button("Quit Others and Start") { quitOthersAndStart(check) }
+            Button("Start Anyway") { manager.open(id: check.profile.id) }
+            Button("Cancel", role: .cancel) {}
+        } message: { check in
+            Text(check.message)
+        }
         .focusedSceneValue(\.profileCommands, commandContext)
         .onAppear(perform: syncCommandContext)
         .onChange(of: commandContextSignature) { _, _ in syncCommandContext() }
@@ -103,6 +111,7 @@ struct ContentView: View {
             nameFieldFocused: $nameFieldFocused,
             commitEditing: commitEditing,
             cancelEditing: cancelEditing,
+            requestStart: { open(profile) },
             requestRename: { beginRename(profile.id) },
             requestDelete: { requestDelete([profile.id]) },
             requestColor: { setColor($0, for: profile.id) }
@@ -302,9 +311,40 @@ struct ContentView: View {
     /// never fires while a rename text field is active.
     private func openProfiles(_ ids: Set<UUID>) {
         guard editingID == nil else { return }
-        for profile in manager.listedProfiles where ids.contains(profile.id) {
+        let targets = manager.listedProfiles.filter { ids.contains($0.id) }
+        if targets.count == 1 {
+            open(targets[0])
+            return
+        }
+        for profile in targets {
             manager.open(id: profile.id)
         }
+    }
+
+    /// A profile's first start is its sign-in, and the browser's callback
+    /// can reach another running instance of the same app instead. Offer
+    /// to quit those first.
+    private func open(_ profile: ClaudeProfile) {
+        let others = manager.otherRunningProfiles(sameAppAs: profile.id)
+        guard !manager.isRunning(id: profile.id), manager.needsSignIn(id: profile.id), !others.isEmpty else {
+            manager.open(id: profile.id)
+            return
+        }
+        signInCheck = SignInCheck(profile: profile, others: others)
+    }
+
+    private func quitOthersAndStart(_ check: SignInCheck) {
+        for other in check.others {
+            manager.stop(id: other.id)
+        }
+        manager.open(id: check.profile.id)
+    }
+
+    private var signInCheckBinding: Binding<Bool> {
+        Binding(
+            get: { signInCheck != nil },
+            set: { if !$0 { signInCheck = nil } }
+        )
     }
 
     private func stopProfiles(_ ids: Set<UUID>) {
@@ -586,5 +626,20 @@ struct ContentView: View {
             get: { manager.lastError != nil },
             set: { if !$0 { manager.clearError() } }
         )
+    }
+}
+
+/// A first start while other instances of the same app are running.
+private struct SignInCheck {
+    let profile: ClaudeProfile
+    let others: [ClaudeProfile]
+
+    var title: String {
+        "Quit other \(profile.app.name) instances before signing in?"
+    }
+
+    var message: String {
+        let names = others.map { "“\($0.label)”" }.joined(separator: ", ")
+        return "“\(profile.label)” has not been signed in yet. Sign-in links from your browser can open in a running instance (\(names)) instead of this one. Quit Others stops them; their logins are kept."
     }
 }

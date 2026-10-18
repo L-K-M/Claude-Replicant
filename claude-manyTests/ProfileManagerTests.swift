@@ -723,6 +723,32 @@ final class ProfileManagerTests: XCTestCase {
         XCTAssertEqual(manager.state(of: profile.id), .running)
     }
 
+    // MARK: First sign-in
+
+    func testOnlyANeverStartedProfileNeedsASignIn() throws {
+        try makeBundle()
+        let profile = try manager.addProfile(named: "Work")
+        XCTAssertTrue(manager.needsSignIn(id: profile.id))
+        XCTAssertFalse(manager.needsSignIn(id: ClaudeProfile.standard.id), "the default entry uses the normal login")
+
+        try manager.start(id: profile.id)
+        XCTAssertFalse(manager.needsSignIn(id: profile.id))
+    }
+
+    func testOtherRunningInstancesAreThoseOfTheSameApp() throws {
+        try makeBundle()
+        let work = try manager.addProfile(named: "Work")
+        let personal = try manager.addProfile(named: "Personal")
+        let research = try manager.addProfile(named: "Research", app: .chatGPT)
+        try manager.start(id: ClaudeProfile.standard.id)
+        try manager.start(id: work.id)
+
+        XCTAssertEqual(manager.otherRunningProfiles(sameAppAs: personal.id).map(\.id),
+                       [ClaudeProfile.standard.id, work.id])
+        XCTAssertEqual(manager.otherRunningProfiles(sameAppAs: work.id).map(\.id), [ClaudeProfile.standard.id])
+        XCTAssertEqual(manager.otherRunningProfiles(sameAppAs: research.id), [])
+    }
+
     // MARK: Stop
 
     func testStopMarksProfileStoppedAndTerminatesProcess() throws {

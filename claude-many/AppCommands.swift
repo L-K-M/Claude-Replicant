@@ -10,6 +10,7 @@ struct ProfileCommandContext {
     var selectionCount: Int = 0
     var canOpen: Bool = false
     var canStop: Bool = false
+    var canRestart: Bool = false
     var canRename: Bool = false
     var canReveal: Bool = false
     var canCopyPath: Bool = false
@@ -18,12 +19,14 @@ struct ProfileCommandContext {
     var canStopAll: Bool = false
     var openTitle: String = "Open"
     var stopTitle: String = "Stop"
+    var restartTitle: String = "Restart"
     var deleteTitle: String = "Delete Profile…"
 
     // Actions (empty selection keeps them harmless)
     var newProfile: (ManagedApp) -> Void = { _ in }
     var openSelected: () -> Void = {}
     var stopSelected: () -> Void = {}
+    var restartSelected: () -> Void = {}
     var renameSelected: () -> Void = {}
     var deleteSelected: () -> Void = {}
     var revealSelected: () -> Void = {}
@@ -81,6 +84,8 @@ struct ProfileCommands: Commands {
                 .keyboardShortcut(.return, modifiers: .command)
             Button("Stop") { context.stopSelected() }
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
+            Button("Restart") { context.restartSelected() }
+                .keyboardShortcut("r")
             Button("Rename…") { context.renameSelected() }
                 .keyboardShortcut(.return, modifiers: [])
             Button("Delete Profile…") { context.deleteSelected() }
@@ -140,19 +145,21 @@ final class ProfilesMenuBridge: NSObject, NSMenuDelegate {
             .sink { [weak self] _ in self?.sync() }
     }
 
-    // Indices match the CommandMenu layout above: Open, Stop, Rename,
-    // Delete, sep, Reveal, Copy Path, sep, Start All, Stop All, sep, Folder.
+    // Indices match the CommandMenu layout above: Open, Stop, Restart,
+    // Rename, Delete, sep, Reveal, Copy Path, sep, Start All, Stop All, sep,
+    // Folder.
     private func sync() {
-        guard let menu, menu.items.count == 12 else { return }
+        guard let menu, menu.items.count == 13 else { return }
         let context = ProfileCommandCenter.shared.context
         apply(menu.items[0], title: context.openTitle, enabled: context.canOpen)
         apply(menu.items[1], title: context.stopTitle, enabled: context.canStop)
-        apply(menu.items[2], enabled: context.canRename)
-        apply(menu.items[3], title: context.deleteTitle, enabled: context.canDelete)
-        apply(menu.items[5], enabled: context.canReveal)
-        apply(menu.items[6], enabled: context.canCopyPath)
-        apply(menu.items[8], enabled: context.canStartAll)
-        apply(menu.items[9], enabled: context.canStopAll)
+        apply(menu.items[2], title: context.restartTitle, enabled: context.canRestart)
+        apply(menu.items[3], enabled: context.canRename)
+        apply(menu.items[4], title: context.deleteTitle, enabled: context.canDelete)
+        apply(menu.items[6], enabled: context.canReveal)
+        apply(menu.items[7], enabled: context.canCopyPath)
+        apply(menu.items[9], enabled: context.canStartAll)
+        apply(menu.items[10], enabled: context.canStopAll)
     }
 
     private func apply(_ item: NSMenuItem, title: String? = nil, enabled: Bool) {

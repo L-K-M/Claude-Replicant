@@ -11,14 +11,14 @@ struct ProfileRowView: View {
     let requestRename: () -> Void
     let requestDelete: () -> Void
 
-    private var isRunning: Bool { manager.isRunning(id: profile.id) }
+    private var state: InstanceState { manager.state(of: profile.id) }
 
     var body: some View {
         HStack(spacing: 12) {
             Circle()
-                .fill(isRunning ? Color.green : Color.secondary.opacity(0.35))
+                .fill(statusColor)
                 .frame(width: 10, height: 10)
-                .accessibilityLabel(isRunning ? "Running" : "Stopped")
+                .accessibilityLabel(statusTitle)
 
             Image(nsImage: MacPlatform.applicationIcon(at: manager.bundleURL(for: profile.app)))
                 .resizable()
@@ -50,13 +50,22 @@ struct ProfileRowView: View {
 
             Spacer()
 
-            if isRunning {
+            switch state {
+            case .running:
                 Button("Stop") {
                     manager.stop(id: profile.id)
                 }
                 .buttonStyle(.bordered)
                 .help("Quit this \(profile.app.name) instance")
-            } else {
+            case .stopping, .restarting:
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(state == .restarting ? "Restarting…" : "Stopping…")
+                        .foregroundStyle(.secondary)
+                }
+                .help("Waiting for the previous \(profile.app.name) instance to quit")
+            case .stopped:
                 Button("Start") {
                     do { try manager.start(id: profile.id) }
                     catch { manager.report(error) }
@@ -69,6 +78,12 @@ struct ProfileRowView: View {
             }
 
             Menu {
+                if state == .running {
+                    Button("Restart") { manager.restart(id: profile.id) }
+                        .disabled(manager.lastKnownBundleStatus(for: profile.app) != .available)
+                } else if state == .restarting {
+                    Button("Cancel Restart") { manager.stop(id: profile.id) }
+                }
                 if !profile.isDefault {
                     Button("Rename…", action: requestRename)
                 }
@@ -91,6 +106,23 @@ struct ProfileRowView: View {
             .help("More actions")
         }
         .padding(.vertical, 4)
+    }
+
+    private var statusColor: Color {
+        switch state {
+        case .running: return .green
+        case .stopping, .restarting: return .orange
+        case .stopped: return Color.secondary.opacity(0.35)
+        }
+    }
+
+    private var statusTitle: String {
+        switch state {
+        case .running: return "Running"
+        case .stopping: return "Stopping"
+        case .restarting: return "Restarting"
+        case .stopped: return "Stopped"
+        }
     }
 
     private var subtitle: String {

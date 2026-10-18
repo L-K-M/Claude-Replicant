@@ -11,6 +11,10 @@ final class ProfileManager {
 
     private(set) var profiles: [ClaudeProfile] = []
     private(set) var runningProfileIDs: Set<UUID> = []
+    /// Stopped by us, but the old process has not exited yet.
+    private var stoppingProfileIDs: Set<UUID> = []
+    /// Entries to start as soon as their stopping instance exits.
+    private var startsAfterExit: Set<UUID> = []
     private(set) var lastError: String?
     private var bundleURLs: [ManagedApp: URL]
     /// Why profiles.json could not be opened at all (as opposed to decoded),
@@ -626,6 +630,12 @@ final class ProfileManager {
         runningProfileIDs.contains(id)
     }
 
+    func state(of id: UUID) -> InstanceState {
+        if runningProfileIDs.contains(id) { return .running }
+        guard stoppingProfileIDs.contains(id) else { return .stopped }
+        return startsAfterExit.contains(id) ? .restarting : .stopping
+    }
+
     /// Launch only after a fresh scan, so an externally opened default instance is not duplicated.
     func start(id: UUID) throws {
         guard let profile = listedProfiles.first(where: { $0.id == id }) else {
@@ -648,19 +658,7 @@ final class ProfileManager {
             throw ProfileManagerError.stopInProgress
         }
 
-        let bundle = bundleURL(for: profile.app)
-        let status = profile.app.bundleStatus(at: bundle)
-        recordBundleStatus(status, for: profile.app)
-        switch status {
-        case .available:
-            break
-        case .missing:
-            throw ProfileManagerError.bundleMissing(app: profile.app, path: bundle.path)
-        case .unsupported:
-            throw ProfileManagerError.unsupportedBundle(app: profile.app, path: bundle.path)
-        case .otherApp:
-            throw ProfileManagerError.otherApp(app: profile.app, path: bundle.path)
-        }
+        let bundle = try launchableBundle(for: profile.app)
 
         // Create the profile's data directory lazily; the app builds its own
         // layout (Local Storage, cookies, config, sessions) on first run.
@@ -675,6 +673,23 @@ final class ProfileManager {
         )
         attach(handle: handle, to: id)
         lastError = nil
+    }
+
+    /// The app's bundle, or the reason it cannot start an instance now.
+    private func launchableBundle(for app: ManagedApp) throws -> URL {
+        let bundle = bundleURL(for: app)
+        let status = app.bundleStatus(at: bundle)
+        recordBundleStatus(status, for: app)
+        switch status {
+        case .available:
+            return bundle
+        case .missing:
+            throw ProfileManagerError.bundleMissing(app: app, path: bundle.path)
+        case .unsupported:
+            throw ProfileManagerError.unsupportedBundle(app: app, path: bundle.path)
+        case .otherApp:
+            throw ProfileManagerError.otherApp(app: app, path: bundle.path)
+        }
     }
 
     /// Registers a live handle as the running instance for a profile and
@@ -705,23 +720,51 @@ final class ProfileManager {
     /// "Open" a profile like a document: starts it when stopped, or brings the
     /// existing instance's windows to the front when already running.
     func open(id: UUID) {
-        if isRunning(id: id), let handle = handles[id] {
-            launcher.activate(handle: handle)
-            return
+        switch state(of: id) {
+        case .running:
+            if let handle = handles[id] { launcher.activate(handle: handle) }
+        case .stopping, .restarting:
+            startsAfterExit.insert(id)
+        case .stopped:
+            do {
+                try start(id: id)
+            } catch {
+                report(error)
+            }
         }
-        do {
-            try start(id: id)
-        } catch {
-            report(error)
+    }
+
+    /// Quits the instance and starts it again once the old process has
+    /// exited, e.g. to pick up an app update. A stopped entry just starts.
+    /// An instance whose app can no longer start (moved, replaced by an
+    /// unsupported build) keeps running.
+    func restart(id: UUID) {
+        switch state(of: id) {
+        case .running:
+            guard let app = listedProfiles.first(where: { $0.id == id })?.app else { return }
+            do {
+                _ = try launchableBundle(for: app)
+            } catch {
+                report(error)
+                return
+            }
+            stop(id: id)
+            startsAfterExit.insert(id)
+        case .stopping, .restarting:
+            startsAfterExit.insert(id)
+        case .stopped:
+            open(id: id)
         }
     }
 
     /// Asks the instance to quit cleanly (SIGTERM), then force-kills it if it
-    /// has not exited within a few seconds. The UI reflects "stopped"
-    /// immediately; internal bookkeeping is cleaned up when the process exits.
+    /// has not exited within a few seconds. The entry is `.stopping` until
+    /// the process exits; that also cancels a start queued behind it.
     func stop(id: UUID) {
+        if startsAfterExit.contains(id) { startsAfterExit.remove(id) }
         guard isRunning(id: id), let handle = handles[id] else { return }
         runningProfileIDs.remove(id)
+        stoppingProfileIDs.insert(id)
         forceKillTasks[id]?.cancel()
         handle.terminate()
 
@@ -733,7 +776,9 @@ final class ProfileManager {
         forceKillTasks[id] = task
     }
 
+    /// Also cancels starts queued behind instances that are still quitting.
     func stopAll() {
+        if !startsAfterExit.isEmpty { startsAfterExit.removeAll() }
         for id in Array(runningProfileIDs) {
             stop(id: id)
         }
@@ -745,6 +790,10 @@ final class ProfileManager {
     func startAll() {
         refreshRunningProcesses()
         for profile in listedProfiles where !isRunning(id: profile.id) {
+            guard state(of: profile.id) == .stopped else {
+                startsAfterExit.insert(profile.id)
+                continue
+            }
             do {
                 try launch(profile)
             } catch {
@@ -760,8 +809,17 @@ final class ProfileManager {
         guard handles[id] === handle else { return }
         handles[id] = nil
         runningProfileIDs.remove(id)
+        stoppingProfileIDs.remove(id)
         forceKillTasks[id]?.cancel()
         forceKillTasks[id] = nil
+
+        guard startsAfterExit.remove(id) != nil,
+              listedProfiles.contains(where: { $0.id == id }) else { return }
+        do {
+            try start(id: id)
+        } catch {
+            report(error)
+        }
     }
 
     // MARK: Settings

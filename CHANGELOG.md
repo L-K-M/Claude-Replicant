@@ -30,6 +30,9 @@
 - Lighter status checks: the two-second scan skips unrelated processes
   by their kernel command name, Start All scans once, and the list no
   longer reads app bundles or icons from disk while drawing.
+- A profile that is shutting down shows "Stopping…" until its instance has
+  quit, instead of a Start button that fails. Restart (⌘R) quits and reopens a profile;
+  Open or Start All during shutdown start it again once it has quit.
 
 ## 1.0.0
 

@@ -427,6 +427,17 @@ final class ProfileManager {
         profiles[index] = profile.withDataDirectory(claimUniqueDataDirectory(for: profile.label))
     }
 
+    /// nil returns the profile to its automatic color.
+    func setColor(_ color: ProfileColor?, forProfile id: UUID) throws {
+        guard !ClaudeProfile.isBuiltIn(id: id) else { throw ProfileManagerError.builtInProfile }
+        try ensureProfileListWritable()
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else {
+            throw ProfileManagerError.profileNotFound
+        }
+        profiles[index].color = color
+        try persist()
+    }
+
     /// Removes the profile from the list (stopping it first if running).
     /// Its data directory is deliberately left on disk: it holds the account's
     /// login and conversations, and deletion is destructive.

@@ -48,6 +48,10 @@
 - Copy Terminal Environment (row and context menus) copies an `export` line
   that points `claude` or `codex` in Terminal at a profile's settings and
   login.
+- Profiles show a colored monogram with a small app badge instead of the
+  same app icon on every row; choose a color from the row's Color menu.
+  Start and Stop buttons share one width and no longer use the prominent
+  style on every row.
 
 ## 1.0.0
 

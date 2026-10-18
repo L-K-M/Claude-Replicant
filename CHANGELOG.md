@@ -15,6 +15,8 @@
 - Very long profile names no longer make Start fail with "File name too
   long": the name part of a data folder is capped at 64 bytes, and
   profiles saved with a longer, never-created folder get a capped one.
+- A new profile's data folder is named after the name you give it, not
+  "new-claude-profile". Folders that already exist are never moved.
 
 ## 1.0.0
 

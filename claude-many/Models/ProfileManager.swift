@@ -46,6 +46,10 @@ final class ProfileManager {
     private var handles: [UUID: ClaudeProcessHandle] = [:]
     /// Pending force-kill timers, one per stopped profile.
     private var forceKillTasks: [UUID: Task<Void, Never>] = [:]
+    /// Every data folder loaded or handed out this session. Undo can bring
+    /// back any of them, so a folder name a profile gave up (or a deleted
+    /// profile left behind) is never given to another profile.
+    @ObservationIgnored private var claimedDataDirectories: Set<String> = []
     private static let reconciliationInterval: Duration = .seconds(2)
     private var monitorOwner: UUID?
 
@@ -116,6 +120,7 @@ final class ProfileManager {
         do {
             profiles = try store.load()
             repairOverlongDataDirectories()
+            claimedDataDirectories.formUnion(profiles.map(\.dataDirectory.path))
         } catch {
             lastError = "Could not load profiles: \(error.localizedDescription)"
             return
@@ -134,8 +139,8 @@ final class ProfileManager {
             let storedLength = directory.lastPathComponent.decomposedStringWithCanonicalMapping.utf8.count
             guard storedLength > Self.maximumFileNameLength,
                   directory.deletingLastPathComponent().standardizedFileURL.path == dataRootDirectory.standardizedFileURL.path,
-                  !FileManager.default.fileExists(atPath: directory.path),
-                  let replacement = try? makeUniqueDataDirectory(for: profiles[index].label) else { continue }
+                  !FileManager.default.fileExists(atPath: directory.path) else { continue }
+            let replacement = claimUniqueDataDirectory(for: profiles[index].label)
             profiles[index] = profiles[index].withDataDirectory(replacement)
             repaired = true
         }
@@ -220,7 +225,7 @@ final class ProfileManager {
     func addProfile(named label: String, app: ManagedApp = .claude) throws -> ClaudeProfile {
         guard let trimmed = ClaudeProfile.normalizedLabel(label) else { throw ProfileManagerError.invalidLabel }
 
-        let dataDirectory = try makeUniqueDataDirectory(for: trimmed)
+        let dataDirectory = claimUniqueDataDirectory(for: trimmed)
         let profile = ClaudeProfile(label: trimmed, app: app, dataDirectory: dataDirectory)
         profiles.append(profile)
         try persist()
@@ -249,7 +254,26 @@ final class ProfileManager {
         }
         guard let trimmed = ClaudeProfile.normalizedLabel(newLabel) else { throw ProfileManagerError.invalidLabel }
         profiles[index].label = trimmed
+        renameUnusedDataDirectory(at: index)
         try persist()
+    }
+
+    /// New profiles start as "New Claude Profile", and their folder is only
+    /// created on first Start. Until then the folder follows the name, so
+    /// "Work" lives in `Profiles/work`, not `Profiles/new-claude-profile`.
+    /// A folder that exists is never moved.
+    private func renameUnusedDataDirectory(at index: Int) {
+        let profile = profiles[index]
+        guard handles[profile.id] == nil,
+              let current = profile.location.dataDirectory,
+              current.deletingLastPathComponent().standardizedFileURL.path == dataRootDirectory.standardizedFileURL.path,
+              !FileManager.default.fileExists(atPath: current.path) else { return }
+
+        // "work-2" already fits "Work" when "work" was taken.
+        let base = Self.slug(for: profile.label)
+        let name = current.lastPathComponent
+        guard name != base, !(name.hasPrefix(base + "-") && Int(name.dropFirst(base.count + 1)) != nil) else { return }
+        profiles[index] = profile.withDataDirectory(claimUniqueDataDirectory(for: profile.label))
     }
 
     /// Removes the profile from the list (stopping it first if running).
@@ -278,13 +302,33 @@ final class ProfileManager {
         for id in profiles.map(\.id) where !snapshotIDs.contains(id) {
             stop(id: id)
         }
-        profiles = snapshot
+        profiles = snapshot.map(keepingDataDirectoryInUse)
+        // Every name is claimed when handed out; restored ones stay claimed
+        // even if that changes.
+        claimedDataDirectories.formUnion(profiles.map(\.dataDirectory.path))
         releaseUnlistedBuiltIns()
         do {
             try persist()
         } catch {
             lastError = "Could not save profiles: \(error.localizedDescription)"
         }
+    }
+
+    /// Undoing a rename restores the old folder name, but if the profile
+    /// was started since, its data now lives in the new folder. A folder
+    /// that exists, or that a tracked instance uses, is never abandoned.
+    /// A profile only leaves a folder that does not exist, so an old folder
+    /// that exists now belongs to someone else and is never restored.
+    private func keepingDataDirectoryInUse(_ restored: ClaudeProfile) -> ClaudeProfile {
+        let fileManager = FileManager.default
+        guard let restoredDirectory = restored.location.dataDirectory,
+              let currentDirectory = profiles.first(where: { $0.id == restored.id })?.location.dataDirectory,
+              currentDirectory != restoredDirectory,
+              handles[restored.id] != nil
+                || fileManager.fileExists(atPath: currentDirectory.path)
+                || fileManager.fileExists(atPath: restoredDirectory.path)
+        else { return restored }
+        return restored.withDataDirectory(currentDirectory)
     }
 
     // MARK: Start / stop
@@ -453,13 +497,14 @@ final class ProfileManager {
 
     // MARK: Helpers
 
-    /// Builds a unique, filesystem-friendly directory name for a new profile.
-    private func makeUniqueDataDirectory(for label: String) throws -> URL {
+    /// A folder name for `label` that no profile has used this session and
+    /// that does not exist on disk, e.g. "work" or "work-2".
+    private func claimUniqueDataDirectory(for label: String) -> URL {
+        let occupied = claimedDataDirectories.union(profiles.map(\.dataDirectory.path))
         let base = Self.slug(for: label)
         var candidate = base
         var counter = 2
 
-        let occupied = Set(profiles.map { $0.dataDirectory.path })
         while FileManager.default.fileExists(atPath: dataRootDirectory
             .appendingPathComponent(candidate).path)
             || occupied.contains(dataRootDirectory
@@ -467,7 +512,9 @@ final class ProfileManager {
             candidate = "\(base)-\(counter)"
             counter += 1
         }
-        return dataRootDirectory.appendingPathComponent(candidate, isDirectory: true)
+        let directory = dataRootDirectory.appendingPathComponent(candidate, isDirectory: true)
+        claimedDataDirectories.insert(directory.path)
+        return directory
     }
 
     /// Folder names stay below the 255-byte file name limit even when the

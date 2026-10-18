@@ -181,7 +181,8 @@ struct ContentView: View {
     private var commandContextSignature: String {
         let selectionPart = selection.sorted { $0.uuidString < $1.uuidString }
             .map(\.uuidString).joined()
-        let profilePart = manager.profiles.map { "\($0.id.uuidString)=\($0.label)" }.joined()
+        // The folder can change without the label (re-slugged before first start).
+        let profilePart = manager.profiles.map { "\($0.id.uuidString)=\($0.label)@\($0.dataDirectory.path)" }.joined()
         let runningPart = manager.runningProfileIDs.sorted { $0.uuidString < $1.uuidString }
             .map(\.uuidString).joined()
         let editingPart = editingID?.uuidString ?? ""

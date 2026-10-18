@@ -28,6 +28,12 @@ struct ClaudeProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
 
     var isDefault: Bool { location == .standard }
 
+    /// A name as stored: trimmed, or nil when nothing is left.
+    static func normalizedLabel(_ label: String) -> String? {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     /// The standard path is display metadata, never a directory the manager creates or copies.
     var dataDirectory: URL {
         location.dataDirectory ?? app.standardDataDirectory

@@ -199,6 +199,12 @@ then run `claude` (or `codex` for a ChatGPT profile). The CLI then reads the
 same `.claude/` (or `.codex/`) settings, history, and credential namespace the
 app gives its own Code sessions. The setting lasts for that Terminal session.
 
+Check **Open at Launch** in a profile's … menu (or its right-click menu) to
+start it whenever Claude Replicant starts; profiles already running are left
+alone. With **Open Claude Replicant at login** in Settings, your accounts are
+ready after you log in. macOS may ask you to allow the login item in System
+Settings → General → Login Items.
+
 Deleting a profile only removes it from the list — the data directory stays
 on disk so nothing is lost. Folders no profile uses appear under **Unlisted
 Data** at the bottom of the list: **Restore** lists one again with its

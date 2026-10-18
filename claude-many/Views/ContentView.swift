@@ -281,6 +281,12 @@ struct ContentView: View {
                 Button("Rename…") { beginRename(targets[0].id) }
                 ProfileColorMenu(profile: targets[0]) { setColor($0, for: targets[0].id) }
             }
+            if targets.count == 1 {
+                Toggle("Open at Launch", isOn: Binding(
+                    get: { manager.opensAtLaunch(id: targets[0].id) },
+                    set: { manager.setOpensAtLaunch($0, id: targets[0].id) }
+                ))
+            }
             Button("Reveal in Finder") { reveal(ids) }
             if targets.count == 1 {
                 Button("Copy Data Folder Path") {

@@ -62,6 +62,8 @@
   keeps the app running.
 - Opening a running profile whose window was closed reopens its window,
   like a Dock click; before, only its menu bar appeared.
+- Open at Launch, per profile, starts it when Claude Replicant starts;
+  Settings → Open Claude Replicant at login adds it to Login Items.
 
 ## 1.0.0
 

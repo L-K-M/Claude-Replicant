@@ -94,6 +94,7 @@ struct ProfileRowView: View {
                     Button("Rename…", action: requestRename)
                     ProfileColorMenu(profile: profile, choose: requestColor)
                 }
+                Toggle("Open at Launch", isOn: opensAtLaunch)
                 Button("Reveal in Finder") {
                     MacPlatform.revealInFinder(profile.dataDirectory)
                 }
@@ -145,6 +146,13 @@ struct ProfileRowView: View {
 
     /// Start and Stop share a width so the trailing menus line up.
     private static let actionButtonWidth: CGFloat = 40
+
+    private var opensAtLaunch: Binding<Bool> {
+        Binding(
+            get: { manager.opensAtLaunch(id: profile.id) },
+            set: { manager.setOpensAtLaunch($0, id: profile.id) }
+        )
+    }
 
     private var subtitle: String {
         if profile.isDefault {

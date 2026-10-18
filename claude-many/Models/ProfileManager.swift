@@ -38,6 +38,12 @@ final class ProfileManager {
     /// read Info.plist from disk. `bundleStatus(for:)` checks now.
     private var knownBundleStatuses: [ManagedApp: AppBundleStatus] = [:]
 
+    /// Entries to open when Claude Replicant starts. Default entries can be
+    /// marked too, so the set lives in defaults rather than profiles.json.
+    private var launchProfileIDs: Set<UUID>
+    @ObservationIgnored private var didOpenLaunchProfiles = false
+    private static let launchProfilesDefaultsKey = "opensAtLaunchProfileIDs"
+
     /// Claude is always listed; ChatGPT once it has a profile.
     var listedApps: [ManagedApp] {
         ManagedApp.allCases.filter { app in
@@ -157,6 +163,11 @@ final class ProfileManager {
         if let claudeBundleURL { bundleURLs[.claude] = claudeBundleURL }
         if let chatGPTBundleURL { bundleURLs[.chatGPT] = chatGPTBundleURL }
         self.bundleURLs = bundleURLs
+
+        let launchIDs = self.defaults.stringArray(forKey: Self.launchProfilesDefaultsKey) ?? []
+        launchProfileIDs = Set(launchIDs.compactMap(UUID.init(uuidString:)))
+
+        // After every stored property is set: these are observed accessors.
         for app in ManagedApp.allCases {
             knownBundleStatuses[app] = app.bundleStatus(at: self.bundleURLs[app] ?? app.defaultBundleURL)
         }
@@ -995,6 +1006,47 @@ final class ProfileManager {
             guard let installed = installedVersions[app], installed != exit.installed else { continue }
             recentExits[id] = nil
             if !isRunning(id: id), !closedForUpdateIDs.contains(id) { closedForUpdateIDs.append(id) }
+        }
+    }
+
+    // MARK: Open at launch
+
+    func opensAtLaunch(id: UUID) -> Bool {
+        launchProfileIDs.contains(id)
+    }
+
+    /// Kept for removed profiles too, so undoing a delete keeps the choice.
+    func setOpensAtLaunch(_ opens: Bool, id: UUID) {
+        if opens {
+            launchProfileIDs.insert(id)
+        } else {
+            launchProfileIDs.remove(id)
+        }
+        defaults.set(launchProfileIDs.map(\.uuidString).sorted(), forKey: Self.launchProfilesDefaultsKey)
+    }
+
+    /// Starts the marked entries that are not running, once per run of the
+    /// app: the window can close and reopen without starting them again.
+    /// Running ones are left alone, so a login launch pulls no window
+    /// forward. The first failure is reported after the rest have started,
+    /// since a successful start clears the error; so is an error from
+    /// before, such as a list that could not be loaded.
+    func openProfilesMarkedForLaunch() {
+        guard !didOpenLaunchProfiles else { return }
+        didOpenLaunchProfiles = true
+        let earlierError = lastError
+        var firstFailure: (any Error)?
+        for profile in listedProfiles where launchProfileIDs.contains(profile.id) && !isRunning(id: profile.id) {
+            do {
+                try start(id: profile.id)
+            } catch {
+                firstFailure = firstFailure ?? error
+            }
+        }
+        if let firstFailure {
+            report(firstFailure)
+        } else if lastError == nil {
+            lastError = earlierError
         }
     }
 

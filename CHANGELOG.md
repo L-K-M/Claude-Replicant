@@ -38,6 +38,9 @@
   SIGTERM, then SIGKILL after 5 seconds). Force Quit ends a stopping instance at once. An instance that
   not even SIGKILL ends shows as running again with an error instead of
   "Stopping…" forever.
+- The Profiles menu greys out commands that do not apply to the
+  selection; before, AppKit kept every item enabled. Return renames only
+  from the profile list, no longer from other windows or text fields.
 
 ## 1.0.0
 

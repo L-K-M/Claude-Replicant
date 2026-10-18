@@ -45,6 +45,9 @@
   the old version, and warns when a profile quit for the update (the
   updater reopens it as the Default entry). Settings shows each app's
   version and flags versions newer than the ones last checked.
+- Copy Terminal Environment (row and context menus) copies an `export` line
+  that points `claude` or `codex` in Terminal at a profile's settings and
+  login.
 
 ## 1.0.0
 

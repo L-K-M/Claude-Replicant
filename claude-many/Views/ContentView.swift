@@ -265,6 +265,12 @@ struct ContentView: View {
                 Button("Copy Data Folder Path") {
                     MacPlatform.copyPathToPasteboard(targets[0].dataDirectory)
                 }
+                if let exports = targets[0].terminalExports {
+                    Button("Copy Terminal Environment") {
+                        MacPlatform.copyToPasteboard(exports)
+                    }
+                    .help(ProfileRowView.terminalEnvironmentHelp(for: targets[0].app))
+                }
             }
             let deletables = targets.filter { !$0.isDefault }
             if !deletables.isEmpty {

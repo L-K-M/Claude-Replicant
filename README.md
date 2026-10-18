@@ -169,13 +169,20 @@ The profile list works like Finder: click to select (⇧/⌘ for multiples),
 double-click to open a profile, press **Return** to rename it inline, **⌘⌫**
 to delete, and drag to reorder profiles below the pinned Default entry.
 Right-click a row (or use the **Profiles** menu) for Open, Stop, Restart
-(**⌘R**), Rename, Delete, Reveal in Finder, and Copy Data Folder Path. A
-profile that is shutting down shows "Stopping…" until its instance has quit;
-Open or Start All during that time start it again once it has, and Stop
-cancels that. Restart is offered only while the app can start again. Add,
-rename, delete, and reorder are all undoable via **⌘Z**. The window title bar shows how many
+(**⌘R**), Rename, Delete, Reveal in Finder, and Copy Data Folder Path; the
+context and row menus also offer Copy Terminal Environment. A profile that is
+shutting down shows "Stopping…" until its instance has quit; Open or Start All
+during that time start it again once it has, and Stop cancels that. Restart is
+offered only while the app can start again. Add, rename, delete, and reorder
+are all undoable via **⌘Z**. The window title bar shows how many
 instances are running, and quitting the window quits the app; running Claude
 instances keep running and are adopted on the next launch.
+
+To use a profile's account from the command line, right-click it and choose
+**Copy Terminal Environment**, paste the copied `export …` line into Terminal,
+then run `claude` (or `codex` for a ChatGPT profile). The CLI then reads the
+same `.claude/` (or `.codex/`) settings, history, and credential namespace the
+app gives its own Code sessions. The setting lasts for that Terminal session.
 
 Deleting a profile only removes it from the list — the data directory stays
 on disk so nothing is lost. Folders no profile uses appear under **Unlisted

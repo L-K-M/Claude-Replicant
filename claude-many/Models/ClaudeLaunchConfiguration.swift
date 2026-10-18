@@ -51,19 +51,43 @@ struct ClaudeLaunchConfiguration {
             environment.removeValue(forKey: name)
         }
 
-        guard let directory = location.dataDirectory, let configuration = codeConfigurationDirectory else {
-            return environment
-        }
+        guard let directory = location.dataDirectory else { return environment }
 
-        switch app {
-        case .claude:
-            environment[Self.codeConfigEnvironment] = configuration.path
-            environment[Self.secureStorageEnvironment] = configuration.path
-        case .chatGPT:
+        environment.merge(cliEnvironment) { _, profile in profile }
+        if app == .chatGPT {
             environment[Self.chatGPTUserDataEnvironment] = directory.path
-            environment[Self.codexHomeEnvironment] = configuration.path
         }
         return environment
+    }
+
+    /// What the app hands its bundled CLI (Claude Code or Codex). A terminal
+    /// with the same variables runs `claude` or `codex` with this profile's
+    /// CLI settings and login. Empty for a standard launch.
+    var cliEnvironment: [String: String] {
+        guard let configuration = codeConfigurationDirectory else { return [:] }
+        switch app {
+        case .claude:
+            return [Self.codeConfigEnvironment: configuration.path,
+                    Self.secureStorageEnvironment: configuration.path]
+        case .chatGPT:
+            return [Self.codexHomeEnvironment: configuration.path]
+        }
+    }
+
+    /// `cliEnvironment` as one line to paste into a POSIX shell, e.g.
+    /// `export CODEX_HOME='/Users/me/…/research/.codex'`.
+    var shellExports: String? {
+        guard !cliEnvironment.isEmpty else { return nil }
+        let assignments = cliEnvironment
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)=\(Self.shellQuoted($0.value))" }
+        return "export " + assignments.joined(separator: " ")
+    }
+
+    /// Single quotes keep spaces, `$`, and backticks literal; an embedded
+    /// quote closes, escapes, and reopens: it's -> 'it'\''s'.
+    private static func shellQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
     }
 
     /// Inherited variables that would move storage; standard launches drop them.

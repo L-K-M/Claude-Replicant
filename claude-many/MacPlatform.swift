@@ -71,8 +71,12 @@ enum MacPlatform {
     }
 
     static func copyPathToPasteboard(_ url: URL) {
+        copyToPasteboard(url.path)
+    }
+
+    static func copyToPasteboard(_ text: String) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(url.path, forType: .string)
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     /// `~/Library/...` instead of `/Users/name/Library/...`: shorter and the

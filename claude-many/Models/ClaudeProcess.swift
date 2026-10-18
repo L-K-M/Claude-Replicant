@@ -34,7 +34,7 @@ protocol ClaudeLauncher: Sendable {
     /// Current-user standard and isolated instances of `app` running `executable`.
     func runningHandles(app: ManagedApp, executable: URL) -> [ClaudeProcessHandle]
     /// Brings the process's windows to the front (double-click "Open").
-    func activate(handle: ClaudeProcessHandle)
+    @MainActor func activate(handle: ClaudeProcessHandle)
 }
 
 /// Real launcher backed by Foundation's `Process`.
@@ -90,9 +90,15 @@ struct RealClaudeLauncher: ClaudeLauncher {
         return result
     }
 
+    /// macOS 14 activation is cooperative: only the active app can hand
+    /// activation to another, and choosing an item in the menu bar extra
+    /// does not make Claude Replicant active. Take activation, then yield it.
+    @MainActor
     func activate(handle: ClaudeProcessHandle) {
-        NSRunningApplication(processIdentifier: pid_t(handle.processIdentifier))?
-            .activate(options: [])
+        guard let app = NSRunningApplication(processIdentifier: pid_t(handle.processIdentifier)) else { return }
+        NSApp.activate()
+        NSApp.yieldActivation(to: app)
+        _ = app.activate(from: .current, options: [.activateAllWindows])
     }
 
     // MARK: Process introspection

@@ -18,6 +18,9 @@ struct ProfileCommandContext {
     var canDelete: Bool = false
     var canStartAll: Bool = false
     var canStopAll: Bool = false
+    /// False while no window publishes a context, e.g. with only the menu
+    /// bar item showing.
+    var hasWindow: Bool = false
     var openTitle: String = "Open"
     var stopTitle: String = "Stop"
     var restartTitle: String = "Restart"
@@ -34,7 +37,6 @@ struct ProfileCommandContext {
     var copyPathSelected: () -> Void = {}
     var startAll: () -> Void = {}
     var stopAll: () -> Void = {}
-    var openProfilesFolder: () -> Void = {}
 }
 
 struct ProfileCommandContextKey: FocusedValueKey {
@@ -58,6 +60,9 @@ extension FocusedValues {
 final class ProfileCommandCenter: ObservableObject {
     static let shared = ProfileCommandCenter()
     @Published var context = ProfileCommandContext()
+    /// A New Profile command chosen while the window was closed; the window
+    /// creates it when it appears.
+    var pendingNewProfile: ManagedApp?
 }
 
 struct ProfileCommands: Commands {
@@ -74,10 +79,9 @@ struct ProfileCommands: Commands {
     // own — every closure is a no-op when it does not apply.
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button(ManagedApp.claude.newProfileTitle) { context.newProfile(.claude) }
-                .keyboardShortcut("n")
-            Button(ManagedApp.chatGPT.newProfileTitle) { context.newProfile(.chatGPT) }
-                .keyboardShortcut("n", modifiers: [.command, .option])
+            NewProfileButton(app: .claude, context: context, shortcut: KeyboardShortcut("n"))
+            NewProfileButton(app: .chatGPT, context: context,
+                             shortcut: KeyboardShortcut("n", modifiers: [.command, .option]))
         }
 
         CommandMenu(ProfilesMenu.title) {
@@ -105,7 +109,8 @@ struct ProfileCommands: Commands {
 
             Divider()
 
-            Button(ProfilesMenu.Item.openFolder.title) { context.openProfilesFolder() }
+            // Needs no window, so it works from the menu bar item too.
+            Button(ProfilesMenu.Item.openFolder.title) { MacPlatform.revealProfilesFolder() }
         }
 
         CommandGroup(replacing: .help) {
@@ -139,6 +144,28 @@ enum ProfilesMenu {
             case .openFolder: return "Open Profiles Folder in Finder"
             }
         }
+    }
+}
+
+/// New profiles are named in the window, so this opens it first when only
+/// the menu bar item is showing. A view, for `openWindow`.
+private struct NewProfileButton: View {
+    let app: ManagedApp
+    let context: ProfileCommandContext
+    let shortcut: KeyboardShortcut
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button(app.newProfileTitle) {
+            guard !context.hasWindow else {
+                context.newProfile(app)
+                return
+            }
+            ProfileCommandCenter.shared.pendingNewProfile = app
+            NSApp.activate()
+            openWindow(id: AppBranding.mainWindowID)
+        }
+        .keyboardShortcut(shortcut)
     }
 }
 

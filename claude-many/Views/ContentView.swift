@@ -98,7 +98,13 @@ struct ContentView: View {
             Text(check.message)
         }
         .focusedSceneValue(\.profileCommands, commandContext)
-        .onAppear(perform: syncCommandContext)
+        .onAppear {
+            syncCommandContext()
+            createPendingProfile()
+        }
+        // With the menu bar item the app outlives this window; the Profiles
+        // menu must not act on a selection nobody can see.
+        .onDisappear { ProfileCommandCenter.shared.context = ProfileCommandContext() }
         .onChange(of: commandContextSignature) { _, _ in syncCommandContext() }
         .onChange(of: nameFieldFocused) { _, focused in
             // Clicking elsewhere commits an in-progress rename, like Finder.
@@ -185,6 +191,7 @@ struct ContentView: View {
         let stoppableTargets = targets.filter { [.running, .restarting].contains(manager.state(of: $0.id)) }
         let restartableTargets = runningTargets.filter(canRestart)
         var context = ProfileCommandContext()
+        context.hasWindow = true
         context.selectionCount = targets.count
         context.canOpen = !targets.isEmpty
         context.canStop = !stoppableTargets.isEmpty
@@ -216,7 +223,6 @@ struct ContentView: View {
         }
         context.startAll = manager.startAll
         context.stopAll = manager.stopAll
-        context.openProfilesFolder = openProfilesFolder
         return context
     }
 
@@ -310,6 +316,14 @@ struct ContentView: View {
         }
     }
 
+    /// File > New Profile chosen while the window was closed. Deferred a
+    /// turn so the window's profile list has loaded.
+    private func createPendingProfile() {
+        guard let app = ProfileCommandCenter.shared.pendingNewProfile else { return }
+        ProfileCommandCenter.shared.pendingNewProfile = nil
+        DispatchQueue.main.async { newProfile(app) }
+    }
+
     /// "Open" acts like double-clicking a file: start a stopped instance or
     /// bring a running one to the front. Never stops a running profile, and
     /// never fires while a rename text field is active.
@@ -381,16 +395,6 @@ struct ContentView: View {
             .filter { ids.contains($0.id) }
             .map(\.dataDirectory)
         MacPlatform.revealInFinder(urls)
-    }
-
-    private func openProfilesFolder() {
-        // The root is created lazily; make it exist so Finder has something
-        // real to show.
-        try? FileManager.default.createDirectory(
-            at: ProfileManager.profilesRootDirectory,
-            withIntermediateDirectories: true
-        )
-        MacPlatform.revealInFinder(ProfileManager.profilesRootDirectory)
     }
 
     private func locateBundle(for app: ManagedApp) {

@@ -177,8 +177,15 @@ that is shutting down shows "Stopping…" until its instance has quit; Open or
 Start All during that time start it again once it has, and Stop cancels that.
 Restart is offered only while the app can start again. Add, rename, delete,
 and reorder are all undoable via **⌘Z**. The window title bar shows how many
-instances are running, and quitting the window quits the app; running Claude
-instances keep running and are adopted on the next launch.
+instances are running, and closing the window quits the app unless the menu
+bar item is on; running Claude instances keep running and are adopted on the
+next launch.
+
+To switch accounts without opening the window, turn on **Show in menu bar**
+in Settings. The menu lists every entry with its running state: choose one to
+start it or bring it to the front, or use Stop, Start All, and Stop All. While
+the menu bar item is on, closing the window keeps Claude Replicant running;
+quit it from that menu.
 
 To use a profile's account from the command line, right-click it and choose
 **Copy Terminal Environment**, paste the copied `export …` line into Terminal,

@@ -57,6 +57,9 @@
 - The list groups the pinned Default entries and your profiles under
   headers, drops the zebra stripes, and shows the running count under the
   window title instead of in a toolbar capsule.
+- Optional menu bar item (Settings → Show in menu bar) to open, stop, and
+  switch profiles without the window. While it is on, closing the window
+  keeps the app running.
 
 ## 1.0.0
 

@@ -54,6 +54,9 @@
   style on every row.
 - Starting a profile for the first time while other instances of the same
   app run offers to quit them first, so the sign-in reaches the new one.
+- The list groups the pinned Default entries and your profiles under
+  headers, drops the zebra stripes, and shows the running count under the
+  window title instead of in a toolbar capsule.
 
 ## 1.0.0
 

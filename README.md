@@ -235,7 +235,11 @@ a draft GitHub release. The gated live smoke test is described under
   an update replaces the binary all profiles launch. Profile data is
   retained, but an updater relaunch may drop profile arguments. Quit profile
   instances before updating and reopen them through Claude Replicant
-  afterwards.
+  afterwards. Claude Replicant notices an update while its window is open:
+  it offers to restart profiles still running the old version, and warns
+  when a profile quit for the update, since a window that reopened by
+  itself is Default Claude. Settings shows each app's version and flags
+  versions newer than the ones this mechanism was checked with.
 - **Managed local storage is per profile**, under
   `~/Library/Application Support/Claude-Many/Profiles/<slug>/`, with Code
   configuration in `.claude/`. Claude Replicant does not copy or modify your

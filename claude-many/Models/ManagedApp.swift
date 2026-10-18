@@ -106,6 +106,34 @@ enum ManagedApp: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
+extension ManagedApp {
+    /// The newest version the launch mechanism was checked with; keep in
+    /// step with README ("How it works").
+    var checkedVersion: String {
+        switch self {
+        case .claude: return "2.31226.1"
+        case .chatGPT: return "26.1007.71326"
+        }
+    }
+
+    /// Whether `version` is newer than `checkedVersion`, comparing the
+    /// numbers between dots ("2.4.0" is older than "2.31226.1").
+    func isNewerThanChecked(_ version: String) -> Bool {
+        version.compare(checkedVersion, options: .numeric) == .orderedDescending
+    }
+
+    /// `CFBundleShortVersionString` of the bundle, read directly: `Bundle`
+    /// caches and would miss an update installed in place.
+    func bundleVersion(at bundle: URL) -> String? {
+        let infoURL = bundle.appendingPathComponent("Contents/Info.plist")
+        guard let data = try? Data(contentsOf: infoURL),
+              let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+            return nil
+        }
+        return info["CFBundleShortVersionString"] as? String
+    }
+}
+
 enum AppBundleStatus: Equatable, Sendable {
     case available
     case missing

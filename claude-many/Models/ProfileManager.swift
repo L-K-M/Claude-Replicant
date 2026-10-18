@@ -16,6 +16,18 @@ final class ProfileManager {
     /// Entries to start as soon as their stopping instance exits.
     private var startsAfterExit: Set<UUID> = []
     private(set) var lastError: String?
+    /// Each app's installed version, read with every scan.
+    private(set) var installedVersions: [ManagedApp: String] = [:]
+    /// The version each tracked instance runs, as far as known: the
+    /// installed version when it was started or first seen.
+    private var instanceVersions: [UUID: String] = [:]
+    /// The version whose restart notice the user postponed, per app.
+    private var postponedRestartVersions: [ManagedApp: String] = [:]
+    /// Isolated entries that quit on their own, with the version the last
+    /// scan before the quit found installed, until an update shows up or
+    /// `updateRelaunchWindow` passes.
+    @ObservationIgnored private var recentExits: [UUID: (installed: String?, date: Date)] = [:]
+    private var closedForUpdateIDs: [UUID] = []
     private var bundleURLs: [ManagedApp: URL]
     /// Why profiles.json could not be opened at all (as opposed to decoded),
     /// or could not be kept safely before rewriting. Saving would replace
@@ -76,6 +88,9 @@ final class ProfileManager {
     /// profile left behind) is never given to another profile.
     @ObservationIgnored private var claimedDataDirectories: Set<String> = []
     private static let reconciliationInterval: Duration = .seconds(2)
+    /// How long after an instance quits an update can still explain it:
+    /// the updater replaces the bundle once the app has quit.
+    private static let updateRelaunchWindow: TimeInterval = 120
     private var monitorOwner: UUID?
 
     // MARK: Well-known paths
@@ -269,6 +284,7 @@ final class ProfileManager {
         for app in ManagedApp.allCases {
             recordBundleStatus(bundleStatus(for: app), for: app)
         }
+        refreshInstalledVersions()
 
         // Classic or another app at the configured path cannot be started,
         // so never manage instances running from it either.
@@ -304,6 +320,7 @@ final class ProfileManager {
             guard stopSupervisors[id] == nil else { continue }
             handle.terminationHandler = nil
             handles[id] = nil
+            instanceVersions[id] = nil
             runningProfileIDs.remove(id)
         }
     }
@@ -418,6 +435,7 @@ final class ProfileManager {
         try ensureProfileListWritable()
         stop(id: id)
         profiles.removeAll { $0.id == id }
+        closedForUpdateIDs.removeAll { $0 == id }
         releaseUnlistedBuiltIns()
         try persist()
         rescanUnlistedData()
@@ -704,6 +722,10 @@ final class ProfileManager {
     private func attach(handle: ClaudeProcessHandle, to id: UUID) {
         handles[id] = handle
         runningProfileIDs.insert(id)
+        if let app = listedProfiles.first(where: { $0.id == id })?.app {
+            instanceVersions[id] = installedVersions[app]
+        }
+        closedForUpdateIDs.removeAll { $0 == id }
 
         handle.terminationHandler = { [weak self, weak handle] in
             // Process calls the handler on an arbitrary queue; hop to the
@@ -867,6 +889,14 @@ final class ProfileManager {
         // a stale handle from an earlier stop could otherwise wipe out the
         // bookkeeping of a freshly restarted instance.
         guard handles[id] === handle else { return }
+        // Quit on its own, perhaps to install an update: the updater
+        // replaces the bundle after the app quits. The last scan's version,
+        // not the bundle's now: the quit can reach here after the swap.
+        // See `profilesClosedForUpdate`.
+        if !stoppingProfileIDs.contains(id), let app = profiles.first(where: { $0.id == id })?.app {
+            recentExits[id] = (installedVersions[app], Date())
+        }
+        instanceVersions[id] = nil
         handles[id] = nil
         runningProfileIDs.remove(id)
         stoppingProfileIDs.remove(id)
@@ -879,6 +909,67 @@ final class ProfileManager {
             try start(id: id)
         } catch {
             report(error)
+        }
+    }
+
+    // MARK: App updates
+
+    func installedVersion(of app: ManagedApp) -> String? {
+        installedVersions[app]
+    }
+
+    /// Running entries of `app` started before its installed version: they
+    /// run the old one until restarted. Empty after `postponeRestart(for:)`
+    /// until another version is installed.
+    func instancesNeedingRestart(for app: ManagedApp) -> [ClaudeProfile] {
+        guard let installed = installedVersions[app],
+              postponedRestartVersions[app] != installed else { return [] }
+        return listedProfiles.filter { profile in
+            guard profile.app == app, isRunning(id: profile.id),
+                  let running = instanceVersions[profile.id] else { return false }
+            return running != installed
+        }
+    }
+
+    func postponeRestart(for app: ManagedApp) {
+        postponedRestartVersions[app] = installedVersions[app]
+    }
+
+    /// Isolated entries that quit on their own while their app was updated.
+    /// Claude's updater relaunches the app without the profile's folder, so
+    /// a window that reopened by itself belongs to the Default entry.
+    var profilesClosedForUpdate: [ClaudeProfile] {
+        closedForUpdateIDs.compactMap { id in profiles.first { $0.id == id } }
+    }
+
+    func dismissClosedForUpdate(id: UUID) {
+        closedForUpdateIDs.removeAll { $0 == id }
+    }
+
+    private func refreshInstalledVersions() {
+        // An unsupported build (ChatGPT Classic) has no version worth
+        // tracking: its instances cannot be restarted from here.
+        for app in ManagedApp.allCases {
+            let version = bundleStatus(for: app) == .unsupported ? nil : app.bundleVersion(at: bundleURL(for: app))
+            if installedVersions[app] != version { installedVersions[app] = version }
+        }
+
+        // Seen while the version could not be read, say mid-update: assume
+        // current, as for instances adopted at launch.
+        for profile in listedProfiles where isRunning(id: profile.id) && instanceVersions[profile.id] == nil {
+            if let installed = installedVersions[profile.app] { instanceVersions[profile.id] = installed }
+        }
+
+        let now = Date()
+        for (id, exit) in recentExits {
+            guard now.timeIntervalSince(exit.date) < Self.updateRelaunchWindow,
+                  let app = profiles.first(where: { $0.id == id })?.app else {
+                recentExits[id] = nil
+                continue
+            }
+            guard let installed = installedVersions[app], installed != exit.installed else { continue }
+            recentExits[id] = nil
+            if !isRunning(id: id), !closedForUpdateIDs.contains(id) { closedForUpdateIDs.append(id) }
         }
     }
 

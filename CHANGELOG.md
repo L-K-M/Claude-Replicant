@@ -41,6 +41,10 @@
 - The Profiles menu greys out commands that do not apply to the
   selection; before, AppKit kept every item enabled. Return renames only
   from the profile list, no longer from other windows or text fields.
+- After an app update, a banner offers to restart profiles still running
+  the old version, and warns when a profile quit for the update (the
+  updater reopens it as the Default entry). Settings shows each app's
+  version and flags versions newer than the ones last checked.
 
 ## 1.0.0
 

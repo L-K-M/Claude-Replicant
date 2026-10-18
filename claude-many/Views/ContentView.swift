@@ -251,6 +251,9 @@ struct ContentView: View {
             if targets.contains(where: canRestart) {
                 Button("Restart") { restartProfiles(ids) }
             }
+            if targets.contains(where: { [.stopping, .restarting].contains(manager.state(of: $0.id)) }) {
+                Button("Force Quit") { forceQuitProfiles(ids) }
+            }
             Divider()
             if targets.count == 1, !targets[0].isDefault {
                 Button("Rename…") { beginRename(targets[0].id) }
@@ -304,6 +307,13 @@ struct ContentView: View {
     private func restartProfiles(_ ids: Set<UUID>) {
         for profile in manager.listedProfiles where ids.contains(profile.id) && canRestart(profile) {
             manager.restart(id: profile.id)
+        }
+    }
+
+    /// Kills instances that are taking too long to quit.
+    private func forceQuitProfiles(_ ids: Set<UUID>) {
+        for profile in manager.listedProfiles where ids.contains(profile.id) {
+            manager.forceQuit(id: profile.id)
         }
     }
 

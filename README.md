@@ -86,9 +86,11 @@ inspected in Claude Desktop **2.31226.1** from the official
 Desktop profile API. Updates can change its behavior. The live smoke test
 checks the installed app; it does not verify signing in or running Code tasks.
 
-Stopping a profile sends SIGTERM to its process (with a SIGKILL fallback
-after 5 seconds), terminating only that instance — other profiles and
-any separately launched Claude Desktop instances are unaffected.
+Stopping a profile asks its app to quit the way ⌘Q does, so it can save
+its state. If it is still running 10 seconds later it gets SIGTERM, and
+after another 20 seconds SIGKILL; **Force Quit** in the row's menu kills
+it at once. Only that instance is affected: other profiles and any
+separately launched Claude Desktop instances keep running.
 
 ### ChatGPT
 

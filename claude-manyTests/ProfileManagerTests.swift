@@ -73,8 +73,11 @@ final class FakeClaudeProcess: ClaudeProcessHandle, @unchecked Sendable {
     let app: ManagedApp
     let dataDirectory: URL?
     private(set) var terminationRequested = false
+    private(set) var signaled = false
     private(set) var forceKilled = false
     private(set) var exited = false
+    /// A process stuck in the kernel, which not even SIGKILL ends.
+    var survivesKill = false
     var terminationHandler: (@Sendable () -> Void)?
 
     /// Models reality: SIGTERM leaves the process alive until it actually
@@ -87,7 +90,11 @@ final class FakeClaudeProcess: ClaudeProcessHandle, @unchecked Sendable {
     }
 
     func terminate() { terminationRequested = true }
-    func terminateForcefully() { forceKilled = true; exited = true }
+    func sendTerminationSignal() { signaled = true }
+    func terminateForcefully() {
+        forceKilled = true
+        if !survivesKill { exited = true }
+    }
 
     /// Simulates the process exiting on its own (after SIGTERM or on its own).
     func simulateExit() {

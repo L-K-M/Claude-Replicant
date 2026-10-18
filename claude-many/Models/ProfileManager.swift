@@ -68,8 +68,9 @@ final class ProfileManager {
     /// folder is offered until a save succeeds.
     @ObservationIgnored private var savedDataDirectories: Set<String>? = []
     private var handles: [UUID: ClaudeProcessHandle] = [:]
-    /// Pending force-kill timers, one per stopped profile.
-    private var forceKillTasks: [UUID: Task<Void, Never>] = [:]
+    /// Escalates each stop until its process exits; see `StopTimeline`.
+    private var stopSupervisors: [UUID: Task<Void, Never>] = [:]
+    private let stopTimeline: StopTimeline
     /// Every data folder loaded or handed out this session. Undo can bring
     /// back any of them, so a folder name a profile gave up (or a deleted
     /// profile left behind) is never given to another profile.
@@ -122,7 +123,8 @@ final class ProfileManager {
         chatGPTBundleURL: URL? = nil,
         defaults: UserDefaults? = nil,
         dataRootDirectory: URL = ProfileManager.profilesRootDirectory,
-        trash: FileTrash = .system
+        trash: FileTrash = .system,
+        stopTimeline: StopTimeline = .standard
     ) {
         self.store = store
             ?? ProfileStore(fileURL: Self.appSupportDirectory.appendingPathComponent("profiles.json"))
@@ -130,6 +132,7 @@ final class ProfileManager {
         self.defaults = defaults ?? .standard
         self.dataRootDirectory = dataRootDirectory
         self.trash = trash
+        self.stopTimeline = stopTimeline
 
         var bundleURLs: [ManagedApp: URL] = [:]
         for app in ManagedApp.allCases {
@@ -296,8 +299,9 @@ final class ProfileManager {
     private func releaseUnlistedBuiltIns() {
         let listed = Set(listedProfiles.map(\.id))
         for (id, handle) in handles where ClaudeProfile.isBuiltIn(id: id) && !listed.contains(id) {
-            // A pending Stop keeps its handle until the process exits.
-            guard forceKillTasks[id] == nil else { continue }
+            // A pending Stop keeps its handle until the process exits or
+            // the stop gives up.
+            guard stopSupervisors[id] == nil else { continue }
             handle.terminationHandler = nil
             handles[id] = nil
             runningProfileIDs.remove(id)
@@ -757,23 +761,79 @@ final class ProfileManager {
         }
     }
 
-    /// Asks the instance to quit cleanly (SIGTERM), then force-kills it if it
-    /// has not exited within a few seconds. The entry is `.stopping` until
-    /// the process exits; that also cancels a start queued behind it.
+    /// Asks the instance to quit the way ⌘Q does, so it can save its state,
+    /// and escalates only while it keeps running (see `StopTimeline`). The
+    /// entry is `.stopping` until the process exits; that also cancels a
+    /// start queued behind it.
     func stop(id: UUID) {
         if startsAfterExit.contains(id) { startsAfterExit.remove(id) }
         guard isRunning(id: id), let handle = handles[id] else { return }
         runningProfileIDs.remove(id)
         stoppingProfileIDs.insert(id)
-        forceKillTasks[id]?.cancel()
         handle.terminate()
+        superviseStop(of: id, handle: handle, after: .quitRequested)
+    }
 
-        let task = Task { [weak handle] in
-            try? await Task.sleep(for: .seconds(5))
-            guard let handle, handle.isRunning else { return }
-            handle.terminateForcefully()
+    /// Kills an instance that is taking too long to quit; it may lose
+    /// unsaved state. Only while stopping: a running instance is asked to
+    /// quit first.
+    func forceQuit(id: UUID) {
+        guard stoppingProfileIDs.contains(id), let handle = handles[id] else { return }
+        handle.terminateForcefully()
+        superviseStop(of: id, handle: handle, after: .killed)
+    }
+
+    /// Takes the next escalation step each time a delay passes with the
+    /// process still running. Cancelled when the process exits.
+    private func superviseStop(of id: UUID, handle: ClaudeProcessHandle, after step: StopTimeline.Step) {
+        stopSupervisors[id]?.cancel()
+        let timeline = stopTimeline
+        stopSupervisors[id] = Task { [weak self] in
+            var step = step
+            while true {
+                try? await Task.sleep(for: timeline.delay(after: step))
+                guard !Task.isCancelled, let self, self.handles[id] === handle else { return }
+                // An exit the termination callback has not reported yet.
+                guard handle.isRunning else {
+                    self.handleTermination(of: id, handle: handle)
+                    return
+                }
+
+                switch step {
+                case .quitRequested:
+                    handle.sendTerminationSignal()
+                    step = .terminated
+                case .terminated:
+                    handle.terminateForcefully()
+                    step = .killed
+                case .killed:
+                    self.giveUpStopping(id: id, handle: handle)
+                    return
+                }
+            }
         }
-        forceKillTasks[id] = task
+    }
+
+    /// Not even SIGKILL ended the process (it is stuck in the kernel). It
+    /// still runs in the profile's folder, as discovery would report anyway,
+    /// so a listed entry counts as running again instead of "Stopping…"
+    /// forever. A deleted profile's process is let go: no row shows it, and
+    /// discovery only adopts listed entries. A start queued behind it is
+    /// dropped, and the error names the process.
+    private func giveUpStopping(id: UUID, handle: ClaudeProcessHandle) {
+        guard handles[id] === handle else { return }
+        stoppingProfileIDs.remove(id)
+        startsAfterExit.remove(id)
+        stopSupervisors[id] = nil
+
+        let label = listedProfiles.first { $0.id == id }?.label
+        if label == nil {
+            handle.terminationHandler = nil
+            handles[id] = nil
+        } else {
+            runningProfileIDs.insert(id)
+        }
+        report(ProfileManagerError.didNotQuit(label: label, processIdentifier: handle.processIdentifier))
     }
 
     /// Also cancels starts queued behind instances that are still quitting.
@@ -810,8 +870,8 @@ final class ProfileManager {
         handles[id] = nil
         runningProfileIDs.remove(id)
         stoppingProfileIDs.remove(id)
-        forceKillTasks[id]?.cancel()
-        forceKillTasks[id] = nil
+        stopSupervisors[id]?.cancel()
+        stopSupervisors[id] = nil
 
         guard startsAfterExit.remove(id) != nil,
               listedProfiles.contains(where: { $0.id == id }) else { return }
@@ -942,6 +1002,7 @@ enum ProfileManagerError: LocalizedError, Equatable {
     case profileListUnavailable(reason: String)
     case unlistedDataUnavailable
     case dataInUse(name: String)
+    case didNotQuit(label: String?, processIdentifier: Int32)
 
     var errorDescription: String? {
         switch self {
@@ -965,6 +1026,9 @@ enum ProfileManagerError: LocalizedError, Equatable {
             return "That folder is no longer unlisted: a profile uses it, or it was moved."
         case .dataInUse(let name):
             return "“\(name)” is in use by a running instance. Quit that instance first."
+        case .didNotQuit(let label, let processIdentifier):
+            let instance = label.map { "“\($0)”" } ?? "An instance"
+            return "\(instance) (process \(processIdentifier)) did not quit, even when forced, and is still running. Check it in Activity Monitor."
         }
     }
 }

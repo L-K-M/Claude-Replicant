@@ -13,8 +13,7 @@ final class OpenAtLaunchTests: XCTestCase {
     override func setUp() async throws {
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("claude-replicant-launch-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root.appendingPathComponent("Claude.app/Contents/MacOS", isDirectory: true),
-                                                withIntermediateDirectories: true)
+        try TestBundle.make(at: root.appendingPathComponent("Claude.app", isDirectory: true))
         defaultsSuiteName = "claude-replicant-launch-tests-\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: defaultsSuiteName)!
         launcher = FakeClaudeLauncher()

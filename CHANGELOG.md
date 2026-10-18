@@ -27,6 +27,9 @@
 - Choosing a different app in Settings (say, Safari) is reported as the
   wrong app instead of failing on Start with a missing-file error. Claude
   is recognized by its bundle identifier.
+- Lighter status checks: the two-second scan skips unrelated processes
+  by their kernel command name, Start All scans once, and the list no
+  longer reads app bundles or icons from disk while drawing.
 
 ## 1.0.0
 

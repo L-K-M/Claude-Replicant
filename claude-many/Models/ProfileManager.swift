@@ -18,6 +18,10 @@ final class ProfileManager {
     /// it, so changes are refused until a later load succeeds.
     @ObservationIgnored private var unopenedProfileList: String?
 
+    /// Bundle checks as of the last refresh, for views: rendering must not
+    /// read Info.plist from disk. `bundleStatus(for:)` checks now.
+    private var knownBundleStatuses: [ManagedApp: AppBundleStatus] = [:]
+
     /// Claude is always listed; ChatGPT once it has a profile.
     var listedApps: [ManagedApp] {
         ManagedApp.allCases.filter { app in
@@ -92,6 +96,16 @@ final class ProfileManager {
         app.bundleStatus(at: bundleURL(for: app))
     }
 
+    func lastKnownBundleStatus(for app: ManagedApp) -> AppBundleStatus {
+        knownBundleStatuses[app] ?? bundleStatus(for: app)
+    }
+
+    /// Writes only on change: every write invalidates the views that read it.
+    private func recordBundleStatus(_ status: AppBundleStatus, for app: ManagedApp) {
+        guard knownBundleStatuses[app] != status else { return }
+        knownBundleStatuses[app] = status
+    }
+
     // MARK: Init
 
     // `defaults` stays an Optional: the compiler crashes emitting
@@ -121,6 +135,9 @@ final class ProfileManager {
         if let claudeBundleURL { bundleURLs[.claude] = claudeBundleURL }
         if let chatGPTBundleURL { bundleURLs[.chatGPT] = chatGPTBundleURL }
         self.bundleURLs = bundleURLs
+        for app in ManagedApp.allCases {
+            knownBundleStatuses[app] = app.bundleStatus(at: self.bundleURLs[app] ?? app.defaultBundleURL)
+        }
     }
 
     /// Only written when the user picks a location other than the default.
@@ -242,10 +259,13 @@ final class ProfileManager {
             handleTermination(of: id, handle: handle)
         }
         releaseUnlistedBuiltIns()
+        for app in ManagedApp.allCases {
+            recordBundleStatus(bundleStatus(for: app), for: app)
+        }
 
         // Classic or another app at the configured path cannot be started,
         // so never manage instances running from it either.
-        for app in listedApps where bundleStatus(for: app).isApp {
+        for app in listedApps where lastKnownBundleStatus(for: app).isApp {
             let executable = bundleURL(for: app).appendingPathComponent(app.executablePath)
             for handle in launcher.runningHandles(app: app, executable: executable) {
                 guard handle.isRunning,
@@ -612,6 +632,12 @@ final class ProfileManager {
             throw ProfileManagerError.profileNotFound
         }
         refreshRunningProcesses()
+        try launch(profile)
+    }
+
+    /// Callers scan for running instances first.
+    private func launch(_ profile: ClaudeProfile) throws {
+        let id = profile.id
         guard !isRunning(id: id) else { return }
 
         // stop() reports the profile as stopped immediately, but the previous
@@ -623,7 +649,9 @@ final class ProfileManager {
         }
 
         let bundle = bundleURL(for: profile.app)
-        switch profile.app.bundleStatus(at: bundle) {
+        let status = profile.app.bundleStatus(at: bundle)
+        recordBundleStatus(status, for: profile.app)
+        switch status {
         case .available:
             break
         case .missing:
@@ -715,9 +743,10 @@ final class ProfileManager {
     /// one profile do not prevent the rest from starting; the last error is
     /// surfaced to the user.
     func startAll() {
+        refreshRunningProcesses()
         for profile in listedProfiles where !isRunning(id: profile.id) {
             do {
-                try start(id: profile.id)
+                try launch(profile)
             } catch {
                 report(error)
             }
@@ -747,6 +776,7 @@ final class ProfileManager {
         }
         defaults.set(trimmed, forKey: app.bundlePathDefaultsKey)
         bundleURLs[app] = URL(fileURLWithPath: trimmed, isDirectory: true)
+        recordBundleStatus(bundleStatus(for: app), for: app)
     }
 
     func setBundleURL(_ url: URL, for app: ManagedApp) {
@@ -756,6 +786,7 @@ final class ProfileManager {
     func resetBundlePath(for app: ManagedApp) {
         defaults.removeObject(forKey: app.bundlePathDefaultsKey)
         bundleURLs[app] = app.defaultBundleURL
+        recordBundleStatus(bundleStatus(for: app), for: app)
     }
 
     func report(_ error: any Error) {

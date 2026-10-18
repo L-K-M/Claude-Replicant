@@ -61,9 +61,15 @@ struct RealClaudeLauncher: ClaudeLauncher {
     /// Ambiguous launches are excluded; see `ClaudeLaunchConfiguration.location(of:app:)`.
     func runningHandles(app: ManagedApp, executable: URL) -> [ClaudeProcessHandle] {
         let target = executable.resolvingSymlinksInPath().path
+        // The name the process was exec'd by: the bundle path or its resolved target.
+        let commandNames = Set([target, executable.path].map(Self.commandName(forExecutable:)))
         var result: [ClaudeProcessHandle] = []
-        for (pid, startTime) in Self.allProcesses() {
-            // Read argv/environment only for candidate executables during periodic discovery.
+        for (pid, startTime, command) in Self.allProcesses() {
+            // Runs every 2 s on the main actor: the kernel's command name rules
+            // out nearly every process without a syscall, and only the few
+            // candidates get their path, argv, and environment read. APFS is
+            // usually case-insensitive, so `claude` may run `Claude`.
+            guard commandNames.contains(where: { $0.caseInsensitiveCompare(command) == .orderedSame }) else { continue }
             if let path = Self.executablePath(for: pid), !Self.executableMatches(path, target: target) {
                 continue
             }
@@ -100,7 +106,20 @@ struct RealClaudeLauncher: ClaudeLauncher {
         return String(cString: buffer)
     }
 
-    private static func allProcesses() -> [(pid: Int32, startTime: timeval)] {
+    /// The kernel records the executable's file name, cut to MAXCOMLEN
+    /// bytes, as the command name (`kp_proc.p_comm`) at exec time.
+    private static func commandName(forExecutable path: String) -> String {
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        return String(decoding: name.utf8.prefix(Int(MAXCOMLEN)), as: UTF8.self)
+    }
+
+    private static func commandName(of process: kinfo_proc) -> String {
+        withUnsafeBytes(of: process.kp_proc.p_comm) { bytes in
+            String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        }
+    }
+
+    private static func allProcesses() -> [(pid: Int32, startTime: timeval, command: String)] {
         // The process table can grow between sizing and reading. Retry that race.
         for _ in 0..<processTableReadAttempts {
             var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
@@ -116,7 +135,7 @@ struct RealClaudeLauncher: ClaudeLauncher {
             let populatedCount = size / MemoryLayout<kinfo_proc>.size
             return procs.prefix(populatedCount)
                 .filter { $0.kp_eproc.e_ucred.cr_uid == geteuid() }
-                .map { ($0.kp_proc.p_pid, $0.kp_proc.p_un.__p_starttime) }
+                .map { ($0.kp_proc.p_pid, $0.kp_proc.p_un.__p_starttime, commandName(of: $0)) }
         }
         return []
     }
@@ -146,6 +165,7 @@ struct RealClaudeLauncher: ClaudeLauncher {
     /// The kernel appends " (deleted)" to the path of a binary that was
     /// replaced on disk while running (e.g. a Claude auto-update).
     private static func executableMatches(_ path: String, target: String) -> Bool {
+        if path == target { return true }
         let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
         if resolved == target { return true }
         return resolved.hasPrefix(target) && resolved.hasSuffix(" (deleted)")

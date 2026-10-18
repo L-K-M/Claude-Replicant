@@ -9,6 +9,8 @@ struct ContentView: View {
     @State private var editingDraft = ""
     @State private var pendingDeleteIDs: Set<UUID> = []
     @State private var showingDeleteConfirm = false
+    @State private var pendingTrash: UnlistedProfileData?
+    @State private var showingTrashConfirm = false
     @Environment(\.undoManager) private var envUndoManager
     @Environment(\.openSettings) private var openSettings
     @FocusState private var nameFieldFocused: Bool
@@ -34,6 +36,10 @@ struct ContentView: View {
 
                 if manager.profiles.isEmpty {
                     emptyState
+                }
+
+                if !manager.unlistedData.isEmpty {
+                    unlistedDataSection
                 }
             }
             .listStyle(.inset(alternatesRowBackgrounds: true))
@@ -64,6 +70,12 @@ struct ContentView: View {
             Button("OK", role: .cancel) { manager.clearError() }
         } message: {
             Text(manager.lastError ?? "")
+        }
+        .alert(trashAlertTitle, isPresented: $showingTrashConfirm, presenting: pendingTrash) { data in
+            Button("Move to Trash", role: .destructive) { performTrash(data) }
+            Button("Cancel", role: .cancel) {}
+        } message: { data in
+            Text("It holds that \(data.app.name) account's sign-in, settings, and local history. Undo (⌘Z) puts it back until you empty the Trash.")
         }
         .alert(deleteAlertTitle, isPresented: $showingDeleteConfirm) {
             Button("Delete", role: .destructive, action: performDelete)
@@ -353,7 +365,7 @@ struct ContentView: View {
         } else if running > 1 {
             parts.append("\(running) of them are currently running and will be quit first.")
         }
-        parts.append("This only removes \(targets.count == 1 ? "it" : "them") from the list. The data directory stays on disk, so nothing is lost.")
+        parts.append("This only removes \(targets.count == 1 ? "it" : "them") from the list. The data stays on disk under Unlisted Data, where you can restore it or move it to the Trash.")
         return parts.joined(separator: " ")
     }
 
@@ -366,6 +378,81 @@ struct ContentView: View {
                 try manager.removeProfile(id: id)
             }
         }
+    }
+
+    // MARK: Unlisted data
+
+    /// Data folders no profile uses, such as a deleted profile's. Rows are
+    /// untagged, so they are not part of the profile selection.
+    private var unlistedDataSection: some View {
+        Section {
+            ForEach(manager.unlistedData) { data in
+                UnlistedDataRow(
+                    data: data,
+                    restore: { restoreUnlistedData(data) },
+                    moveToTrash: {
+                        pendingTrash = data
+                        showingTrashConfirm = true
+                    }
+                )
+            }
+        } header: {
+            Text("Unlisted Data")
+        } footer: {
+            Text("Folders no profile uses, such as a deleted profile's. Restore one to use that account again.")
+        }
+    }
+
+    private func restoreUnlistedData(_ data: UnlistedProfileData) {
+        var restored: ClaudeProfile?
+        performProfileEdit("Restore Profile") {
+            restored = try manager.restoreUnlistedData(at: data.directory)
+        }
+        if let restored { selection = [restored.id] }
+    }
+
+    private var trashAlertTitle: String {
+        "Move “\(pendingTrash?.directory.lastPathComponent ?? "")” to the Trash?"
+    }
+
+    private func performTrash(_ data: UnlistedProfileData) {
+        do {
+            let trashed = try manager.trashUnlistedData(at: data.directory)
+            guard let undoManager else { return }
+            Self.registerPutBack(on: undoManager, manager: manager, trashed: trashed, original: data.directory)
+        } catch {
+            manager.report(error)
+        }
+    }
+
+    /// Undo moves the folder back from the Trash; redo trashes it again.
+    private static func registerPutBack(on undoManager: UndoManager, manager: ProfileManager, trashed: URL, original: URL) {
+        undoManager.registerUndo(withTarget: manager) { manager in
+            MainActor.assumeIsolated {
+                do {
+                    try manager.putBackTrashedData(from: trashed, to: original)
+                } catch {
+                    manager.report(error)
+                    return
+                }
+                registerTrash(on: undoManager, manager: manager, original: original)
+            }
+        }
+        undoManager.setActionName("Move to Trash")
+    }
+
+    private static func registerTrash(on undoManager: UndoManager, manager: ProfileManager, original: URL) {
+        undoManager.registerUndo(withTarget: manager) { manager in
+            MainActor.assumeIsolated {
+                do {
+                    let trashed = try manager.trashUnlistedData(at: original)
+                    registerPutBack(on: undoManager, manager: manager, trashed: trashed, original: original)
+                } catch {
+                    manager.report(error)
+                }
+            }
+        }
+        undoManager.setActionName("Move to Trash")
     }
 
     // MARK: Undo plumbing

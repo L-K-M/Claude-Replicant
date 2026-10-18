@@ -12,6 +12,9 @@
   Anyway in Privacy & Security); Control-click → Open no longer works there.
 - Clearing a profile's name while renaming keeps the old name instead of
   showing an error, as in Finder.
+- Very long profile names no longer make Start fail with "File name too
+  long": the name part of a data folder is capped at 64 bytes, and
+  profiles saved with a longer, never-created folder get a capped one.
 
 ## 1.0.0
 

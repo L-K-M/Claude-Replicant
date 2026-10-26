@@ -85,7 +85,8 @@ jobs:
           hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mount" \
             "release/claude-replicant-$VERSION-macos-universal.dmg"
           cmp LICENSE "$mount/$notice"
-          hdiutil detach -quiet "$mount"
+          # The check has passed; force the detach if the volume is busy.
+          hdiutil detach -quiet "$mount" || hdiutil detach -quiet -force "$mount"
 
       - name: Publish draft
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2

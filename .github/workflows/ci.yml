@@ -22,6 +22,16 @@ jobs:
         with:
           persist-credentials: false
       - run: bash -n scripts/*.sh
+      # License statements must agree with LICENSE: the About panel's
+      # copyright line in both configurations, and a README License section
+      # that names the shipped notice and scopes MIT away from the artwork.
+      - name: Check license statements
+        run: |
+          copyright="$(grep -m1 '^Copyright' LICENSE). $(head -1 LICENSE)."
+          [ "$(grep -cF "INFOPLIST_KEY_NSHumanReadableCopyright = \"$copyright\";" claude-many.xcodeproj/project.pbxproj)" -eq 2 ]
+          license_section="$(sed -n '/^## License/,$p' README.md)"
+          grep -q 'LICENSE.txt' <<<"$license_section"
+          grep -q 'media-sources/README.md' <<<"$license_section"
       # Runs the unit tests, builds the universal Release app and verifies its
       # signature. The gated live smoke test stays off: no real Claude Desktop.
       - run: scripts/build.sh --clean
@@ -34,6 +44,13 @@ jobs:
           [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")" = 'claude-replicant' ]
           [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = 'ch.lkmc.ClaudeReplicant' ]
           test -s "build/Claude Replicant.app/Contents/Resources/AppIcon.icns"
+      # The app must carry LICENSE verbatim and show its copyright line.
+      - name: Check license notice
+        run: |
+          app="build/Claude Replicant.app"
+          test -s "$app/Contents/Resources/LICENSE.txt"
+          cmp LICENSE "$app/Contents/Resources/LICENSE.txt"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :NSHumanReadableCopyright' "$app/Contents/Info.plist")" = "$(grep -m1 '^Copyright' LICENSE). $(head -1 LICENSE)." ]
       - name: Check universal binary
         run: |
           lipo -archs "build/Claude Replicant.app/Contents/MacOS/claude-replicant" | grep -q arm64

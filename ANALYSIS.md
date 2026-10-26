@@ -283,7 +283,7 @@ add Settings → Copy Diagnostics (versions, bundle paths, last errors).
   cool for ChatGPT); today the app is system blue.
 - Show `media-sources/replicant-portraits.png` in the empty state and the
   About panel with the unused `AppBranding.subtitle` ("Give Claude the
-  Double Impact"); set `NSHumanReadableCopyright` (empty) from LICENSE.
+  Double Impact").
 - **Voight-Kampff test** (M): an Isolation Check sheet that inspects each
   running instance (argv, environment, data folder, Code config folder,
   keychain namespace) and reports whether it is really isolated.

@@ -296,4 +296,16 @@ a draft GitHub release. The gated live smoke test is described under
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Claude Replicant is a fork of
+[swissgrammie/claude-many](https://github.com/swissgrammie/claude-many). Its
+code, including this fork's changes, is released under the
+[MIT License](LICENSE) (Copyright (c) 2026 claude-many contributors). The app
+bundles no third-party code: it links only Apple system frameworks and the
+Swift runtime that ship with macOS. The license ships in the app's
+`Contents/Resources` as `LICENSE.txt`.
+
+The MIT License does not cover the icon artwork in `media-sources/`
+(`app-icon.png`, `replicant-portraits.png`) or the app icon built from it in
+`claude-many/Assets.xcassets/AppIcon.appiconset/`. See
+[media-sources/README.md](media-sources/README.md) for what is recorded about
+its source and terms.

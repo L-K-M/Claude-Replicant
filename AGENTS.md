@@ -66,6 +66,20 @@ release as a draft.
 Builds are ad-hoc signed (`CODE_SIGN_IDENTITY = "-"`). Do not describe them
 as notarized or Developer ID signed.
 
+## Licensing
+
+- The code is MIT (`LICENSE`). The "Bundle license notices" build phase
+  copies `LICENSE` into the app as `Contents/Resources/LICENSE.txt`, and
+  `INFOPLIST_KEY_NSHumanReadableCopyright` repeats its copyright line. CI
+  and the release workflow check both, and CI checks the README License
+  section. Keep those checks passing.
+- The MIT License does not cover the icon artwork (`media-sources/`,
+  `AppIcon.appiconset`); see `media-sources/README.md`.
+- The app bundles no third-party code. Before adding a dependency or a
+  bundled asset (fonts, images, icons, data), confirm its license allows
+  redistribution in the app, and ship its notice in `Contents/Resources`
+  with a CI `test -s` check.
+
 <!-- shared-rules:start -->
 
 ## Working practices

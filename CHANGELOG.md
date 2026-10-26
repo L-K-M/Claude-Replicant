@@ -64,6 +64,8 @@
   like a Dock click; before, only its menu bar appeared.
 - Open at Launch, per profile, starts it when Claude Replicant starts;
   Settings → Open Claude Replicant at login adds it to Login Items.
+- The app ships its MIT license as `LICENSE.txt` in `Contents/Resources`,
+  and the About panel shows the copyright line from LICENSE.
 
 ## 1.0.0
 

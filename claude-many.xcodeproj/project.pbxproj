@@ -327,7 +327,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "Claude Replicant";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Claude Replicant asks the Claude and ChatGPT instances you manage to quit when you stop them and to reopen their window when you open them.";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright (c) 2026 claude-many contributors. MIT License.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -356,7 +356,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "Claude Replicant";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Claude Replicant asks the Claude and ChatGPT instances you manage to quit when you stop them and to reopen their window when you open them.";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright (c) 2026 claude-many contributors. MIT License.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

@@ -44,6 +44,13 @@ jobs:
           [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")" = 'claude-replicant' ]
           [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = 'ch.lkmc.ClaudeReplicant' ]
           test -s "build/Claude Replicant.app/Contents/Resources/AppIcon.icns"
+      # The app must carry LICENSE verbatim and show its copyright line.
+      - name: Check license notice
+        run: |
+          app="build/Claude Replicant.app"
+          test -s "$app/Contents/Resources/LICENSE.txt"
+          cmp LICENSE "$app/Contents/Resources/LICENSE.txt"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :NSHumanReadableCopyright' "$app/Contents/Info.plist")" = "$(grep -m1 '^Copyright' LICENSE). $(head -1 LICENSE)." ]
       - name: Check universal binary
         run: |
           lipo -archs "build/Claude Replicant.app/Contents/MacOS/claude-replicant" | grep -q arm64

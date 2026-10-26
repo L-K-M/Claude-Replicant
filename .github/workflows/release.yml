@@ -67,6 +67,26 @@ jobs:
             "claude-replicant-$VERSION-macos-universal.zip" \
             "claude-replicant-$VERSION-macos-universal.dmg" > SHA256SUMS.txt)
 
+      # Fail before upload unless the app, the ZIP and the DMG carry LICENSE
+      # verbatim and the app shows its copyright line.
+      - name: Verify license notice
+        env:
+          VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          app="build/Claude Replicant.app"
+          notice="Claude Replicant.app/Contents/Resources/LICENSE.txt"
+          test -s "$app/Contents/Resources/LICENSE.txt"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :NSHumanReadableCopyright' "$app/Contents/Info.plist")" = "$(grep -m1 '^Copyright' LICENSE). $(head -1 LICENSE)." ]
+
+          unzip -p "release/claude-replicant-$VERSION-macos-universal.zip" "$notice" | cmp - LICENSE
+
+          mount="$RUNNER_TEMP/claude-replicant-dmg-check"
+          mkdir -p "$mount"
+          hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mount" \
+            "release/claude-replicant-$VERSION-macos-universal.dmg"
+          cmp LICENSE "$mount/$notice"
+          hdiutil detach -quiet "$mount"
+
       - name: Publish draft
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
